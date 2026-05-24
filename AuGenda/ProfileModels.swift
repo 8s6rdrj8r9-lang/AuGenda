@@ -134,9 +134,9 @@ enum AppFont: String, Codable, CaseIterable, Identifiable {
         case .system:
             return Font.system(style)
         case .atkinson:
-            return Font.custom("AtkinsonHyperlegible-Regular", relativeTo: style)
+            return Font.custom("AtkinsonHyperlegible-Regular", size: 16, relativeTo: style)
         case .openDyslexic:
-            return Font.custom("OpenDyslexic", relativeTo: style)
+            return Font.custom("OpenDyslexic", size: 16, relativeTo: style)
         }
     }
 }
