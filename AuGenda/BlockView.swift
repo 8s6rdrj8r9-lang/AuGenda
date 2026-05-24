@@ -725,7 +725,13 @@ struct BlockDetailView: View {
                 }()) {
                     Button("Done") { dismiss() }
                 }
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: {
+                    #if os(iOS)
+                    return .navigationBarLeading
+                    #else
+                    return .automatic
+                    #endif
+                }()) {
                     // Manual bundle add
                     Menu {
                         BundleMenuItems(block: block)
