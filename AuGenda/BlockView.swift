@@ -712,9 +712,17 @@ struct BlockDetailView: View {
                 .padding(.vertical)
             }
             .navigationTitle(block.displayName)
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: {
+                    #if os(iOS)
+                    return .navigationBarTrailing
+                    #else
+                    return .primaryAction
+                    #endif
+                }()) {
                     Button("Done") { dismiss() }
                 }
                 ToolbarItem(placement: .navigationBarLeading) {
