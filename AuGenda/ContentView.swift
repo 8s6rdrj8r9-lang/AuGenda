@@ -183,6 +183,7 @@ struct TodayView: View {
 
     // MARK: Computed
 
+    private var activeProfile: Profile? { profileManager.activeProfile }
     private var activeProfileID: UUID? { profileManager.activeProfile?.clientID }
     private var activePrefs: ProfilePreferences? { profileManager.activePreferences }
 
