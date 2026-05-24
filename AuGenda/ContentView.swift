@@ -249,7 +249,7 @@ struct TodayView: View {
                 }
             }
             .navigationTitle("Today")
-            #if !targetEnvironment(macCatalyst)
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
             #endif
             .toolbar {
