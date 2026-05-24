@@ -228,17 +228,19 @@ struct TodayView: View {
                     }
 
                     // Child profiles get a simplified card layout
-                    if activeProfile?.role == .child {
-                        ChildAgendaList(items: visibleItems)
-                    } else {
-                        LazyVStack(spacing: 8) {
-                            ForEach(visibleItems) { item in
-                                AgendaItemRowView(item: item)
-                                    .padding(.horizontal)
-                            }
-                            if visibleItems.isEmpty {
-                                EmptyAgendaView(copy: NDCopy.from(profileManager))
-                                    .padding(.top, 40)
+                    Group {
+                        if activeProfile?.role == .child {
+                            ChildAgendaList(items: visibleItems)
+                        } else {
+                            LazyVStack(spacing: 8) {
+                                ForEach(visibleItems) { item in
+                                    AgendaItemRowView(item: item)
+                                        .padding(.horizontal)
+                                }
+                                if visibleItems.isEmpty {
+                                    EmptyAgendaView(copy: NDCopy.from(profileManager))
+                                        .padding(.top, 40)
+                                }
                             }
                         }
                     }
