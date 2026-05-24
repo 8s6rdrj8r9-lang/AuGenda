@@ -901,7 +901,7 @@ struct AddAgendaItemView: View {
                 }
             }
             .navigationTitle("New item")
-            #if !targetEnvironment(macCatalyst)
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
