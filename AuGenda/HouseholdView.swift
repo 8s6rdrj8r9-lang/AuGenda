@@ -152,10 +152,10 @@ struct ProfileDayCard: View {
                     if incomplete.isEmpty {
                         HStack {
                             Image(systemName: totalCount > 0 ? "checkmark.circle.fill" : "tray")
-                                .foregroundStyle(totalCount > 0 ? .green : .tertiary)
+                                .foregroundStyle(totalCount > 0 ? .green : Color.secondary)
                             Text(totalCount > 0 ? "All done for today! 🎉" : "Nothing here yet")
                                 .font(.subheadline)
-                                .foregroundStyle(totalCount > 0 ? .green : .tertiary)
+                                .foregroundStyle(totalCount > 0 ? .green : Color.secondary)
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
