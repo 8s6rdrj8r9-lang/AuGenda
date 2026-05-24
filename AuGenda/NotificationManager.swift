@@ -90,6 +90,7 @@ final class NotificationManager: NSObject, ObservableObject {
         }
     }
 
+    @MainActor
     func refreshAuthorizationStatus() async {
         let settings = await center.notificationSettings()
         authorizationStatus = settings.authorizationStatus
