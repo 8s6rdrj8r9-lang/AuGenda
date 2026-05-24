@@ -55,7 +55,9 @@ struct FocusSessionView: View {
             }
             .padding(.horizontal)
             .navigationTitle("Focus")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
+            #endif
             .sheet(isPresented: $showTaskPicker) {
                 FocusTaskPickerSheet(selectedTask: $selectedTask)
                     .presentationDetents([.medium, .large])

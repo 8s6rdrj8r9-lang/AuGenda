@@ -32,7 +32,7 @@ struct HouseholdOverviewView: View {
             .padding()
         }
         .navigationTitle("Household")
-        #if !targetEnvironment(macCatalyst)
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
         .sheet(item: $addItemForProfile) { profile in
