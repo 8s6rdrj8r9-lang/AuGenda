@@ -509,8 +509,8 @@ struct ProfileSetupView: View {
                             .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
                             .foregroundStyle(.primary)
                     }
-                    #endif
                     .buttonStyle(.plain)
+                    #endif
 
                     if avatarImageData != nil {
                         Button("Remove photo") {
