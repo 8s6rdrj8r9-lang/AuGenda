@@ -193,7 +193,9 @@ struct TaskDetailView: View {
                 .padding()
             }
             .navigationTitle(task.title)
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") { dismiss() }
