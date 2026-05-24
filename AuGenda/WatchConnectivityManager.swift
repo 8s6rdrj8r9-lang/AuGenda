@@ -10,6 +10,7 @@
 // 2. Initialize WatchConnectivityManager early in app lifecycle (see AUDHDAgendaApp.swift)
 // 3. Create a matching WatchConnectivityManager in the Watch Extension target
 
+import Combine
 import Foundation
 import SwiftData
 #if canImport(WatchConnectivity)
@@ -64,6 +65,8 @@ struct WatchSyncPayload: Codable {
 
 @MainActor
 final class WatchConnectivityManager: NSObject, ObservableObject {
+
+    nonisolated let objectWillChange = ObservableObjectPublisher()
 
     static let shared = WatchConnectivityManager()
 

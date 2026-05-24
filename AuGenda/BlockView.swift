@@ -7,6 +7,7 @@
 // - Bundle auto-prompt and manual attachment
 // - WeatherKit suggestions for outdoor blocks
 
+import Combine
 import SwiftUI
 import SwiftData
 import CoreLocation
@@ -16,6 +17,8 @@ import WeatherKit
 
 @MainActor
 final class BlockManager: NSObject, ObservableObject, CLLocationManagerDelegate {
+
+    nonisolated let objectWillChange = ObservableObjectPublisher()
 
     static let shared = BlockManager()
 

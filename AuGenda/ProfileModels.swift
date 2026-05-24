@@ -9,6 +9,7 @@
 // - Enums stored as raw strings
 // - Neurotype array stored as comma-separated string
 
+import Combine
 import Foundation
 import SwiftData
 import SwiftUI
@@ -382,6 +383,8 @@ final class ProfilePreferences {
 /// from switching profiles on other devices when you switch here).
 @MainActor
 final class ActiveProfileManager: ObservableObject {
+
+    nonisolated let objectWillChange = ObservableObjectPublisher()
 
     static let shared = ActiveProfileManager()
 
