@@ -398,7 +398,9 @@ struct FocusTaskPickerSheet: View {
                 }
             }
             .navigationTitle("Pick a task")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }

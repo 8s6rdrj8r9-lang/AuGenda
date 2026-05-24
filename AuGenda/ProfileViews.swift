@@ -236,7 +236,9 @@ struct ProfileSwitcherSheet: View {
                 Spacer()
             }
             .navigationTitle("Switch profile")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { isPresented = false }
@@ -293,7 +295,9 @@ struct ProfileSetupView: View {
                 .tabViewStyle(.page(indexDisplayMode: .never))
             }
             .navigationTitle(stepTitle)
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 // Cancel (non-onboarding only)
                 if !isOnboarding {
@@ -957,7 +961,9 @@ private struct NeurotypeEditorSheet: View {
                 .padding()
             }
             .navigationTitle("Neurotypes")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { isPresented = false } }
                 ToolbarItem(placement: .confirmationAction) {
