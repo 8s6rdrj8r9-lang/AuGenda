@@ -44,7 +44,9 @@ struct HouseholdOverviewView: View {
                 preAssignedProfileID: profile.clientID
             )
             .presentationDetents([.large])
+            #if os(iOS)
             .presentationDragIndicator(.visible)
+            #endif
         }
     }
 

@@ -59,7 +59,9 @@ struct FocusSessionView: View {
             .sheet(isPresented: $showTaskPicker) {
                 FocusTaskPickerSheet(selectedTask: $selectedTask)
                     .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
+            #if os(iOS)
+            .presentationDragIndicator(.visible)
+            #endif
             }
         }
         // When a session ends naturally (focusSessionActive flips to false), start the break

@@ -213,7 +213,9 @@ struct TaskDetailView: View {
             .sheet(isPresented: $showJustStart) {
                 JustStartView(task: task)
                     .presentationDetents([.medium])
-                    .presentationDragIndicator(.visible)
+            #if os(iOS)
+            .presentationDragIndicator(.visible)
+            #endif
             }
         }
     }
@@ -452,7 +454,9 @@ struct JustStartView: View {
             Spacer()
         }
         .padding()
-        .presentationDragIndicator(.visible)
+            #if os(iOS)
+            .presentationDragIndicator(.visible)
+            #endif
     }
 
     private func formatElapsed(_ seconds: Double) -> String {

@@ -110,12 +110,16 @@ struct TaskBacklogView: View {
             .sheet(isPresented: $showAddTask) {
                 AddTaskView(isPresented: $showAddTask)
                     .presentationDetents([.large])
-                    .presentationDragIndicator(.visible)
+            #if os(iOS)
+            .presentationDragIndicator(.visible)
+            #endif
             }
             .sheet(item: $selectedTask) { task in
                 TaskDetailView(task: task)
                     .presentationDetents([.large])
-                    .presentationDragIndicator(.visible)
+            #if os(iOS)
+            .presentationDragIndicator(.visible)
+            #endif
             }
         }
     }

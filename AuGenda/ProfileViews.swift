@@ -147,7 +147,9 @@ struct ProfileQuickSwitchButton: View {
         .sheet(isPresented: $showSwitcher) {
             ProfileSwitcherSheet(isPresented: $showSwitcher)
                 .presentationDetents([.medium])
-                .presentationDragIndicator(.visible)
+            #if os(iOS)
+            .presentationDragIndicator(.visible)
+            #endif
         }
     }
 }
@@ -232,7 +234,9 @@ struct ProfileSwitcherSheet: View {
         .sheet(isPresented: $showAddProfile) {
             ProfileSetupView(isPresented: $showAddProfile)
                 .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
+            #if os(iOS)
+            .presentationDragIndicator(.visible)
+            #endif
         }
     }
 }
@@ -287,7 +291,13 @@ struct ProfileSetupView: View {
                 }
                 // Back (step > 0)
                 if step > 0 {
-                    ToolbarItem(placement: .navigationBarLeading) {
+                    ToolbarItem(placement: {
+                        #if os(iOS)
+                        return .navigationBarLeading
+                        #else
+                        return .automatic
+                        #endif
+                    }()) {
                         Button {
                             withAnimation { step -= 1 }
                         } label: {
@@ -938,7 +948,9 @@ private struct NeurotypeEditorSheet: View {
             }
         }
         .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+            #if os(iOS)
+            .presentationDragIndicator(.visible)
+            #endif
     }
 }
 

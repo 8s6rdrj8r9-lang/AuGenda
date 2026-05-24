@@ -250,10 +250,22 @@ struct TodayView: View {
             .navigationBarTitleDisplayMode(.large)
             #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: {
+                    #if os(iOS)
+                    return .navigationBarLeading
+                    #else
+                    return .automatic
+                    #endif
+                }()) {
                     ProfileQuickSwitchButton()
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: {
+                    #if os(iOS)
+                    return .navigationBarTrailing
+                    #else
+                    return .primaryAction
+                    #endif
+                }()) {
                     HStack(spacing: 4) {
                         // Household overview — coordinator only
                         if activeProfile?.role == .coordinator {
@@ -276,7 +288,9 @@ struct TodayView: View {
             .sheet(isPresented: $showAddItem) {
                 AddAgendaItemView(isPresented: $showAddItem)
                     .presentationDetents([.large])
-                    .presentationDragIndicator(.visible)
+            #if os(iOS)
+            .presentationDragIndicator(.visible)
+            #endif
             }
             .navigationDestination(isPresented: $showHousehold) {
                 HouseholdOverviewView()
@@ -284,7 +298,9 @@ struct TodayView: View {
             .sheet(isPresented: $showEnergyCheck) {
                 EnergyCheckView(isPresented: $showEnergyCheck)
                     .presentationDetents([.medium])
-                    .presentationDragIndicator(.visible)
+            #if os(iOS)
+            .presentationDragIndicator(.visible)
+            #endif
             }
         }
         // Prompt energy check-in once per launch if tracking is on
@@ -487,7 +503,9 @@ struct EnergyBannerView: View {
         .sheet(isPresented: $showCheck) {
             EnergyCheckView(isPresented: $showCheck)
                 .presentationDetents([.medium])
-                .presentationDragIndicator(.visible)
+            #if os(iOS)
+            .presentationDragIndicator(.visible)
+            #endif
         }
     }
 
@@ -759,7 +777,9 @@ struct SettingsView: View {
             .sheet(isPresented: $showAddProfile) {
                 ProfileSetupView(isPresented: $showAddProfile)
                     .presentationDetents([.large])
-                    .presentationDragIndicator(.visible)
+            #if os(iOS)
+            .presentationDragIndicator(.visible)
+            #endif
             }
         }
     }
