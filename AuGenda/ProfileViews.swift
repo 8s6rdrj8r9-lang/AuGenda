@@ -873,7 +873,7 @@ struct ProfileSettingsView: View {
             }
         }
         .navigationTitle("\(profile.name)'s Settings")
-        #if !targetEnvironment(macCatalyst)
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .sheet(isPresented: $showNeurotypeEditor) {
