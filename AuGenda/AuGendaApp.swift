@@ -84,7 +84,7 @@ struct RootView: View {
             .onChange(of: profiles.isEmpty, initial: true) { _, isEmpty in
                 if isEmpty { showOnboarding = true }
             }
-            .fullScreenCover(isPresented: $showOnboarding) {
+            .sheet(isPresented: $showOnboarding) {
                 ProfileSetupView(isPresented: $showOnboarding, isOnboarding: true)
             }
     }
