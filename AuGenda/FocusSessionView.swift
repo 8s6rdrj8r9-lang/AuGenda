@@ -9,6 +9,7 @@
 // - Break phase after session ends (natural or early)
 // - Post-break prompt to start another or return to tasks
 
+import Combine
 import SwiftUI
 import SwiftData
 
