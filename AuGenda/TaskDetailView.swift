@@ -357,7 +357,9 @@ struct JustStartView: View {
                                 committed = true
                                 startedAt = .now
                             }
+                            #if os(iOS)
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            #endif
                         } label: {
                             Text("I'll try it — 2 minutes")
                                 .font(.headline)
@@ -416,7 +418,9 @@ struct JustStartView: View {
 
                     HStack(spacing: 14) {
                         Button("That's enough") {
+                            #if os(iOS)
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            #endif
                             dismiss()
                         }
                         .font(.subheadline)
@@ -427,7 +431,9 @@ struct JustStartView: View {
                         .buttonStyle(.plain)
 
                         Button("Keep going") {
+                            #if os(iOS)
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            #endif
                             dismiss()
                         }
                         .font(.subheadline)
