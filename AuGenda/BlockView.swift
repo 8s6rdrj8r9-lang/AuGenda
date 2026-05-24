@@ -414,8 +414,14 @@ final class BlockManager: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         Swift.Task { @MainActor in
-            if manager.authorizationStatus == .authorizedWhenInUse ||
-               manager.authorizationStatus == .authorizedAlways {
+            let isAuthorized: Bool
+            #if os(iOS)
+            isAuthorized = manager.authorizationStatus == .authorizedWhenInUse ||
+                           manager.authorizationStatus == .authorizedAlways
+            #else
+            isAuthorized = manager.authorizationStatus == .authorizedAlways
+            #endif
+            if isAuthorized {
                 manager.requestLocation()
             }
         }
