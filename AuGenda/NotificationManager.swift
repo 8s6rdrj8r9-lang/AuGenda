@@ -450,16 +450,14 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         let actionID = response.actionIdentifier
 
         DispatchQueue.main.async { [weak self] in
-            Task {
-                await self?.handleAction(actionID: actionID, userInfo: userInfo)
-            }
+            self?.handleAction(actionID: actionID, userInfo: userInfo)
         }
 
         completionHandler()
     }
 
     @MainActor
-    private func handleAction(actionID: String, userInfo: [AnyHashable: Any]) async {
+    private func handleAction(actionID: String, userInfo: [AnyHashable: Any]) {
         switch actionID {
         case NotificationAction.complete:
             // Post to app to mark item complete — handled by scene/view observing this
