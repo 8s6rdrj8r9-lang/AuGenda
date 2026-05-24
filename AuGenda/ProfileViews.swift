@@ -292,7 +292,9 @@ struct ProfileSetupView: View {
                     stepNeurotypes.tag(1)
                     stepAvatar.tag(2)
                 }
+                #if os(iOS)
                 .tabViewStyle(.page(indexDisplayMode: .never))
+                #endif
             }
             .navigationTitle(stepTitle)
             #if os(iOS)
