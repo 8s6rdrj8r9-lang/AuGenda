@@ -87,9 +87,17 @@ struct TaskBacklogView: View {
                 }
             }
             .navigationTitle("Tasks")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: {
+                    #if os(iOS)
+                    return .navigationBarTrailing
+                    #else
+                    return .primaryAction
+                    #endif
+                }()) {
                     Button {
                         showAddTask = true
                     } label: {
