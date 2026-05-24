@@ -449,8 +449,10 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         let userInfo = response.notification.request.content.userInfo
         let actionID = response.actionIdentifier
 
-        Task { @MainActor in
-            await handleAction(actionID: actionID, userInfo: userInfo)
+        DispatchQueue.main.async { [weak self] in
+            Task {
+                await self?.handleAction(actionID: actionID, userInfo: userInfo)
+            }
         }
 
         completionHandler()
