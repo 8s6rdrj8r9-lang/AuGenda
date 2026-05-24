@@ -212,7 +212,7 @@ final class BlockManager: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         // Umbrella / rain gear
         switch condition {
-        case .rain, .heavyRain, .drizzle, .freezingRain, .heavyRain:
+        case .rain, .heavyRain, .drizzle, .freezingRain:
             suggestions.append(WeatherSuggestion(
                 item: "Umbrella",
                 reason: "Rain expected",
