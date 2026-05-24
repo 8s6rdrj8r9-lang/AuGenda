@@ -442,7 +442,7 @@ final class ActiveProfileManager: ObservableObject {
         guard existingCount == 0 else { return }
 
         let profile = Profile(name: "Me", role: .coordinator, sortOrder: 0)
-        let prefs = ProfilePreferences.makePreset(for: [.audhd])
+        let prefs = ProfilePreferences.makePreset(for: Neurotype.audhd)
 
         // Carry over energy level from legacy prefs if available
         if let legacy = legacyPreferences {
