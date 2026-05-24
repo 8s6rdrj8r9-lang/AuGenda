@@ -73,7 +73,6 @@ final class NotificationManager: NSObject, ObservableObject {
         super.init()
         center.delegate = self
         registerCategories()
-        Task { await refreshAuthorizationStatus() }
     }
 
     // MARK: - Authorization
