@@ -448,44 +448,45 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     ) {
         let userInfo = response.notification.request.content.userInfo
         let actionID = response.actionIdentifier
+        let clientID = userInfo["clientID"] as? String ?? ""
 
         DispatchQueue.main.async { [weak self] in
-            self?.handleAction(actionID: actionID, userInfo: userInfo)
+            self?.handleAction(actionID: actionID, clientID: clientID)
         }
 
         completionHandler()
     }
 
     @MainActor
-    private func handleAction(actionID: String, userInfo: [AnyHashable: Any]) {
+    private func handleAction(actionID: String, clientID: String) {
         switch actionID {
         case NotificationAction.complete:
             // Post to app to mark item complete — handled by scene/view observing this
             NotificationCenter.default.post(
                 name: .agendaItemCompleted,
                 object: nil,
-                userInfo: userInfo as? [String: Any]
+                userInfo: ["clientID": clientID]
             )
 
         case NotificationAction.snooze5:
             NotificationCenter.default.post(
                 name: .agendaItemSnoozed,
                 object: nil,
-                userInfo: ["clientID": userInfo["clientID"] ?? "", "minutes": 5]
+                userInfo: ["clientID": clientID, "minutes": 5]
             )
 
         case NotificationAction.snooze15:
             NotificationCenter.default.post(
                 name: .agendaItemSnoozed,
                 object: nil,
-                userInfo: ["clientID": userInfo["clientID"] ?? "", "minutes": 15]
+                userInfo: ["clientID": clientID, "minutes": 15]
             )
 
         case NotificationAction.snooze30:
             NotificationCenter.default.post(
                 name: .agendaItemSnoozed,
                 object: nil,
-                userInfo: ["clientID": userInfo["clientID"] ?? "", "minutes": 30]
+                userInfo: ["clientID": clientID, "minutes": 30]
             )
 
         case NotificationAction.endFocus:
