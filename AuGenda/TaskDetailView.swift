@@ -10,6 +10,9 @@
 
 import SwiftUI
 import SwiftData
+#if os(iOS)
+import UIKit
+#endif
 
 // MARK: - Task Detail View
 
@@ -218,7 +221,9 @@ struct TaskDetailView: View {
     // MARK: - Actions
 
     private func markComplete() {
+        #if os(iOS)
         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+        #endif
         withAnimation(.spring(response: 0.2, dampingFraction: 0.4)) {
             completedAnimation = true
         }
