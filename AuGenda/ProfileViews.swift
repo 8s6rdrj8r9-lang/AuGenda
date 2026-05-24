@@ -7,7 +7,10 @@
 import SwiftUI
 import SwiftData
 import Contacts
+#if os(iOS)
 import ContactsUI
+import UIKit
+#endif
 
 // MARK: - Color(hex:)
 
@@ -100,6 +103,7 @@ struct ProfileAvatarView: View {
 
     var body: some View {
         ZStack {
+            #if os(iOS)
             if let data = profile.avatarImageData,
                let image = UIImage(data: data) {
                 Image(uiImage: image)
@@ -115,6 +119,14 @@ struct ProfileAvatarView: View {
                     .font(.system(size: size * 0.38, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
             }
+            #else
+            Circle()
+                .fill(Color(hex: profile.avatarColorHex))
+                .frame(width: size, height: size)
+            Text(profile.initials.isEmpty ? "?" : profile.initials)
+                .font(.system(size: size * 0.38, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white)
+            #endif
         }
         .overlay(
             Circle()
@@ -317,6 +329,7 @@ struct ProfileSetupView: View {
                 }
             }
         }
+        #if os(iOS)
         .sheet(isPresented: $showContactPicker) {
             ContactAvatarPicker(
                 onSelect: { data in
@@ -326,6 +339,7 @@ struct ProfileSetupView: View {
                 onCancel: { showContactPicker = false }
             )
         }
+        #endif
         .interactiveDismissDisabled(isOnboarding)
         .onAppear {
             if profiles.isEmpty { selectedRole = .coordinator }
@@ -479,6 +493,7 @@ struct ProfileSetupView: View {
                 )
 
                 VStack(spacing: 12) {
+                    #if os(iOS)
                     Button {
                         showContactPicker = true
                     } label: {
@@ -488,6 +503,7 @@ struct ProfileSetupView: View {
                             .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
                             .foregroundStyle(.primary)
                     }
+                    #endif
                     .buttonStyle(.plain)
 
                     if avatarImageData != nil {
@@ -598,6 +614,7 @@ private struct SetupAvatarPreview: View {
 
     var body: some View {
         ZStack {
+            #if os(iOS)
             if let data = imageData, let image = UIImage(data: data) {
                 Image(uiImage: image)
                     .resizable()
@@ -608,6 +625,12 @@ private struct SetupAvatarPreview: View {
                     .font(.system(size: 40, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
             }
+            #else
+            Color(hex: colorHex)
+            Text(initials.isEmpty ? "?" : initials)
+                .font(.system(size: 40, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white)
+            #endif
         }
         .frame(width: 100, height: 100)
         .clipShape(Circle())
@@ -619,6 +642,7 @@ private struct SetupAvatarPreview: View {
 
 // MARK: - ContactAvatarPicker
 
+#if os(iOS)
 /// Wraps CNContactPickerViewController. No explicit permission prompt needed —
 /// the system picker handles access internally.
 struct ContactAvatarPicker: UIViewControllerRepresentable {
@@ -657,6 +681,7 @@ struct ContactAvatarPicker: UIViewControllerRepresentable {
         }
     }
 }
+#endif
 
 // MARK: - ProfileSettingsView
 
