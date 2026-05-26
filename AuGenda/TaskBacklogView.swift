@@ -2,21 +2,28 @@
 // AUDHD Agenda App
 //
 // Full task backlog with:
-// - Three filter modes: All / For Now (smart suggest by energy) / Waiting On
-// - Sort: All = sortOrder, For Now = ndPriorityScore descending
+// - Three filter modes: All / For Now (energy-matched, ndPriorityScore ranked) / Waiting On
+// - Control bar: EnergyFilterBanner (For Now) + sort picker (All)
 // - Add task sheet with all ND-relevant fields
-// - Tap row to open TaskDetailView
-// - Swipe to abandon or defer
+// - Tap row to open TaskDetailView sheet
+// - Design-system styled rows: AgendaTaskCard (inline component, AgendaTask-typed)
 
 import SwiftUI
 import SwiftData
 
-// MARK: - Filter Mode
+// MARK: - Filter & Sort Mode
 
 enum TaskFilter: String, CaseIterable {
-    case all = "All"
+    case all     = "All"
     case suggest = "For Now"
     case waiting = "Waiting"
+}
+
+enum BacklogSortMode: String, CaseIterable {
+    case sortOrder    = "Manual"
+    case ndPriority   = "ND Priority"
+    case dueDate      = "Due Date"
+    case friction     = "Easiest First"
 }
 
 
@@ -26,38 +33,41 @@ struct TaskBacklogView: View {
 
     @EnvironmentObject private var profileManager: ActiveProfileManager
     @Query(
-        filter: #Predicate<Task> { !$0.isComplete && !$0.isAbandoned },
-        sort: \Task.sortOrder
+        filter: #Predicate<AgendaTask> { !$0.isComplete && !$0.isAbandoned },
+        sort: \AgendaTask.sortOrder
     )
-    private var tasks: [Task]
+    private var tasks: [AgendaTask]
 
     @State private var filter: TaskFilter = .all
+    @State private var sortMode: BacklogSortMode = .ndPriority
+    @State private var energyLevel: Int = 3
     @State private var showAddTask = false
-    @State private var selectedTask: Task? = nil
+    @State private var selectedTask: AgendaTask? = nil
 
     private var activeProfileID: UUID? { profileManager.activeProfile?.clientID }
     private var activePrefs: ProfilePreferences? { profileManager.activePreferences }
 
-    private var filteredTasks: [Task] {
-        let energyLevel = activePrefs?.currentEnergyLevel ?? 3
-        let profileID = activeProfileID
+    // MARK: Derived data
 
-        // Assignment filter: show tasks for active profile or unassigned legacy tasks
-        let profileTasks = tasks.filter { task in
+    private var profileTasks: [AgendaTask] {
+        let profileID = activeProfileID
+        return tasks.filter { task in
             if let assignedID = task.assignedToProfileID {
                 return assignedID == profileID
             }
             return true  // unassigned legacy tasks visible to all
         }
+    }
 
+    private var filteredTasks: [AgendaTask] {
         switch filter {
         case .all:
-            return profileTasks.filter { $0.isActionable }
+            return sorted(profileTasks.filter { $0.isActionable })
         case .suggest:
             return profileTasks
                 .filter {
                     $0.isActionable &&
-                    $0.frictionLevel <= energyLevel &&
+                    $0.frictionLevel <= max(energyLevel, 2) &&
                     $0.energyRequired <= energyLevel
                 }
                 .sorted { $0.ndPriorityScore > $1.ndPriorityScore }
@@ -66,22 +76,50 @@ struct TaskBacklogView: View {
         }
     }
 
+    private var hiddenCount: Int {
+        profileTasks.filter { $0.isActionable }.count - filteredTasks.count
+    }
+
+    private func sorted(_ items: [AgendaTask]) -> [AgendaTask] {
+        switch sortMode {
+        case .sortOrder:
+            return items  // already sorted by @Query
+        case .ndPriority:
+            return items.sorted { $0.ndPriorityScore > $1.ndPriorityScore }
+        case .dueDate:
+            return items.sorted {
+                switch ($0.dueDate, $1.dueDate) {
+                case let (a?, b?): return a < b
+                case (_?, nil):   return true   // has date sorts before nil
+                default:          return false
+                }
+            }
+        case .friction:
+            return items.sorted { $0.frictionLevel < $1.frictionLevel }
+        }
+    }
+
+    // MARK: Body
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Filter picker
-                Picker("Filter", selection: $filter.animation()) {
-                    ForEach(TaskFilter.allCases, id: \.self) { f in
-                        Text(f.rawValue).tag(f)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal)
-                .padding(.vertical, 10)
+                filterBar
 
+                // Control bar — energy (For Now) or sort (All/Waiting)
                 if filter == .suggest {
-                    // Hand off to SmartSuggestView for the rich single-task UI
-                    SmartSuggestView()
+                    EnergyFilterBanner(
+                        energyLevel: $energyLevel,
+                        filteredOutCount: hiddenCount
+                    )
+                } else {
+                    sortBar
+                }
+
+                Divider()
+
+                if filteredTasks.isEmpty {
+                    emptyState
                 } else {
                     taskList
                 }
@@ -103,161 +141,286 @@ struct TaskBacklogView: View {
                     } label: {
                         Image(systemName: "plus.circle.fill")
                             .font(.title2)
-                            .foregroundStyle(Color.appAccent)
+                            .foregroundStyle(Tokens.Color.primary)
                     }
                 }
             }
             .sheet(isPresented: $showAddTask) {
                 AddTaskView(isPresented: $showAddTask)
+                #if os(iOS)
                     .presentationDetents([.large])
-            #if os(iOS)
-            .presentationDragIndicator(.visible)
-            #endif
+                    .presentationDragIndicator(.visible)
+                #endif
             }
             .sheet(item: $selectedTask) { task in
                 TaskDetailView(task: task)
+                #if os(iOS)
                     .presentationDetents([.large])
-            #if os(iOS)
-            .presentationDragIndicator(.visible)
-            #endif
+                    .presentationDragIndicator(.visible)
+                #endif
             }
         }
+        .onAppear {
+            energyLevel = activePrefs?.currentEnergyLevel ?? 3
+            InterruptionContext.recordActivity(contextLabel: "browsing tasks")
+        }
+    }
+
+    // MARK: - Sort Bar (All / Waiting modes)
+
+    private var sortBar: some View {
+        HStack(spacing: Tokens.Spacing.sm) {
+            Text("Sort:")
+                .font(Tokens.Typography.caption)
+                .foregroundColor(Color.appTextSecondary)
+
+            ForEach(BacklogSortMode.allCases, id: \.self) { mode in
+                Button {
+                    withAnimation(Tokens.Animation.standardEase()) {
+                        sortMode = mode
+                    }
+                } label: {
+                    Text(mode.rawValue)
+                        .font(Tokens.Typography.caption)
+                        .fontWeight(sortMode == mode ? .semibold : .regular)
+                        .padding(.horizontal, Tokens.Spacing.sm)
+                        .padding(.vertical, Tokens.Spacing.xs)
+                        .background(
+                            sortMode == mode
+                                ? Tokens.Color.primary.opacity(0.12)
+                                : Color.clear
+                        )
+                        .foregroundColor(
+                            sortMode == mode
+                                ? Tokens.Color.primary
+                                : Color.appTextSecondary
+                        )
+                        .cornerRadius(Tokens.Border.radiusSmall)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer()
+
+            Text("\(filteredTasks.count) task\(filteredTasks.count == 1 ? "" : "s")")
+                .font(Tokens.Typography.caption)
+                .foregroundColor(Color.appTextSecondary)
+        }
+        .padding(.horizontal, Tokens.Spacing.base)
+        .padding(.vertical, Tokens.Spacing.sm)
+        .background(Color.appBackgroundSecondary)
+    }
+
+    // MARK: - Filter Bar
+
+    /// Custom tab row replacing the system segmented picker.
+    /// Uses typography + background-shift for state, not borders.
+    /// Each tab is at least 44pt tall for accessible tap targets.
+    private var filterBar: some View {
+        HStack(spacing: 0) {
+            ForEach(TaskFilter.allCases, id: \.self) { mode in
+                Button {
+                    withAnimation(Tokens.Animation.standardEase()) {
+                        filter = mode
+                    }
+                } label: {
+                    Text(mode.rawValue)
+                        .font(Tokens.Typography.label)
+                        .fontWeight(filter == mode ? .semibold : .regular)
+                        .foregroundColor(
+                            filter == mode
+                                ? Color.appAccent
+                                : Color.appTextSecondary
+                        )
+                        .frame(maxWidth: .infinity)
+                        .frame(minHeight: Tokens.Spacing.touchMinimum)
+                        .background(
+                            filter == mode
+                                ? Color.appAccent.opacity(0.08)
+                                : Color.clear
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .background(Color.appBackgroundSecondary)
     }
 
     // MARK: - Task List
 
     @ViewBuilder
     private var taskList: some View {
-        if filteredTasks.isEmpty {
-            emptyState
-        } else {
-            List {
+        ScrollView {
+            LazyVStack(spacing: Tokens.Spacing.xl) {
                 ForEach(filteredTasks) { task in
-                    Button {
+                    AgendaTaskCard(task: task, showWaitingOn: filter == .waiting) {
                         selectedTask = task
-                    } label: {
-                        TaskBacklogRow(task: task, showWaitingOn: filter == .waiting)
+                        InterruptionContext.recordActivity(
+                            itemTitle: task.title,
+                            contextLabel: "task detail"
+                        )
                     }
-                    .buttonStyle(.plain)
-                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
                 }
             }
-            .listStyle(.plain)
+            .padding(.horizontal, Tokens.Spacing.base)
+            .padding(.vertical, Tokens.Spacing.md)
         }
     }
 
+    // MARK: - Empty State
+
     @ViewBuilder
     private var emptyState: some View {
-        VStack(spacing: 14) {
-            Image(systemName: filter == .waiting ? "clock.badge.questionmark" : "tray")
-                .font(.system(size: 40))
-                .foregroundStyle(.tertiary)
-            Text(emptyMessage)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+        EmptyState(
+            icon: filter == .waiting ? "clock.badge.questionmark" : "tray",
+            title: emptyTitle,
+            message: emptyMessage,
+            action: filter == .all ? { showAddTask = true } : nil,
+            actionLabel: filter == .all ? "Add Task" : nil
+        )
+    }
+
+    private var emptyTitle: String {
+        switch filter {
+        case .all:     return "Backlog is clear"
+        case .suggest: return "No tasks for right now"
+        case .waiting: return "Nothing waiting"
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
     }
 
     private var emptyMessage: String {
         switch filter {
-        case .all: return "No tasks in the backlog"
-        case .suggest: return "No tasks match your energy right now"
-        case .waiting: return "Nothing is waiting on anything"
+        case .all:     return "Add your first task to get started."
+        case .suggest: return "Try raising your energy level, or add an easy task."
+        case .waiting: return "No tasks are blocked by anything."
         }
     }
 }
 
 
-// MARK: - Task Backlog Row
+// MARK: - Agenda Task Card (AgendaTask-typed design system card)
+//
+// Distinct from TaskCard (which takes AgendaItem) — this binds to AgendaTask
+// to expose ndPriorityScore, waitingOn, and the full task field set.
 
-struct TaskBacklogRow: View {
-    let task: Task
+struct AgendaTaskCard: View {
+    let task: AgendaTask
     var showWaitingOn: Bool = false
-
-    @Environment(\.appFont) private var appFont
+    let onTap: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                // Priority indicator
-                if task.priority >= 2 {
-                    Circle()
-                        .fill(Color.red)
-                        .frame(width: 7, height: 7)
-                } else if task.priority == 1 {
-                    Circle()
-                        .fill(Color.orange)
-                        .frame(width: 7, height: 7)
+        Button(action: onTap) {
+            HStack(alignment: .top, spacing: 0) {
+                // Priority accent bar — full height, flush to left edge, clipped by clipShape
+                if task.priority > 0 {
+                    Rectangle()
+                        .fill(priorityColor)
+                        .frame(width: 3)
                 }
 
-                Text(task.title)
-                    .font(.app(.body, scheme: appFont))
-                    .fontWeight(.medium)
-                    .foregroundStyle(.primary)
+                VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
 
-                Spacer()
+                    // ── Title row ──
+                    // h3 (16pt semibold) + bold override = clear typographic anchor;
+                    // time estimate trails at caption weight so it doesn't compete.
+                    HStack(alignment: .firstTextBaseline, spacing: Tokens.Spacing.sm) {
+                        Text(task.title)
+                            .font(Tokens.Typography.h3)
+                            .fontWeight(.bold)
+                            .foregroundColor(Color.appTextPrimary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
 
-                Text("~\(task.totalEstimatedMinutes)m")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                        Spacer(minLength: 0)
+
+                        Text("~\(task.totalEstimatedMinutes)m")
+                            .font(Tokens.Typography.caption)
+                            .foregroundColor(Color.appTextSecondary)
+                    }
+
+                    // ── Status row ──
+                    // Whole row at 0.8 opacity so it recedes behind the title.
+                    // Layout: context tag + flags (left) → spacer → dots + date (right).
+                    // This pushes the dot indicators to the trailing edge as quiet status.
+                    HStack(alignment: .center, spacing: Tokens.Spacing.sm) {
+
+                        if !task.contextTag.isEmpty {
+                            Text(task.contextTag)
+                                .font(Tokens.Typography.caption)
+                                .foregroundColor(Color.appTextSecondary)
+                        }
+
+                        if task.needsBodyDouble {
+                            Image(systemName: "person.wave.2.fill")
+                                .font(.system(size: 10, weight: .regular))
+                                .foregroundColor(Tokens.Color.info)
+                        }
+
+                        if task.hyperfocusRisk {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 10, weight: .regular))
+                                .foregroundColor(Tokens.Color.warning)
+                        }
+
+                        Spacer(minLength: 0)
+
+                        // Dots trail right — readable at a glance, not visually competing
+                        FrictionDots(level: task.frictionLevel)
+                        EnergyDots(level: task.energyRequired)
+                        InterestPips(level: task.interestLevel)
+
+                        if let dueDate = task.dueDate {
+                            Text(dueDate.formatted(.dateTime.month(.abbreviated).day()))
+                                .font(Tokens.Typography.caption)
+                                .foregroundColor(dueDateColor(dueDate))
+                        }
+                    }
+                    .opacity(0.8)
+
+                    // ── Waiting-on row (Waiting filter only) ──
+                    if showWaitingOn && !task.waitingOn.isEmpty {
+                        HStack(spacing: Tokens.Spacing.xs) {
+                            Image(systemName: "clock.badge.questionmark")
+                                .font(.system(size: 10))
+                                .foregroundColor(Tokens.Color.warning)
+                            Text(task.waitingOn)
+                                .font(Tokens.Typography.caption)
+                                .foregroundColor(Color.appTextSecondary)
+                                .lineLimit(1)
+                        }
+                        .opacity(0.8)
+                    }
+                }
+                // Uniform lg padding (24pt) — generous whitespace is the primary organizer
+                .padding(Tokens.Spacing.lg)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            HStack(spacing: 8) {
-                FrictionDots(level: task.frictionLevel)
-
-                InterestPips(level: task.interestLevel)
-
-                if !task.contextTag.isEmpty {
-                    Text(task.contextTag)
-                        .font(.caption2)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .foregroundStyle(.secondary)
-                }
-
-                if task.needsBodyDouble {
-                    Image(systemName: "person.2")
-                        .font(.caption2)
-                        .foregroundStyle(.blue)
-                }
-
-                if task.hyperfocusRisk {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                }
-
-                if let dueDate = task.dueDate {
-                    Text("due \(dueDate.formatted(.dateTime.month(.abbreviated).day()))")
-                        .font(.caption2)
-                        .foregroundStyle(.red.opacity(0.8))
-                }
-            }
-
-            if showWaitingOn && !task.waitingOn.isEmpty {
-                HStack(spacing: 4) {
-                    Image(systemName: "clock.badge.questionmark")
-                        .font(.caption2)
-                        .foregroundStyle(.yellow)
-                    Text(task.waitingOn)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            // Subtle surface: secondary background distinguishes panel from page; no border needed
+            .background(Color.appBackgroundSecondary)
+            .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusMedium))
         }
-        .padding(12)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .buttonStyle(.plain)
+    }
+
+    private var priorityColor: Color {
+        switch task.priority {
+        case 2: return Tokens.Color.warning
+        case 1: return Tokens.Color.info
+        default: return Color.clear
+        }
+    }
+
+    private func dueDateColor(_ date: Date) -> Color {
+        let days = Calendar.current.dateComponents([.day], from: .now, to: date).day ?? 0
+        if days < 0  { return Tokens.Color.warning }
+        if days <= 1 { return Tokens.Color.warning }
+        return Color.appTextSecondary
     }
 }
 
 
-// MARK: - Interest Pips (complement to FrictionDots — shows motivation level)
+// MARK: - Interest Pips (motivation level indicator)
 
 struct InterestPips: View {
     let level: Int // 1–5
@@ -266,18 +429,19 @@ struct InterestPips: View {
         HStack(spacing: 2) {
             ForEach(1...5, id: \.self) { pip in
                 RoundedRectangle(cornerRadius: 1)
-                    .fill(pip <= level ? interestColor : Color.secondary.opacity(0.15))
+                    .fill(pip <= level ? interestColor : Color.appBorder.opacity(0.5))
                     .frame(width: 4, height: 8)
             }
         }
+        .accessibilityLabel("Interest level: \(level) of 5")
     }
 
     private var interestColor: Color {
         switch level {
-        case 1, 2: return .gray
-        case 3: return .yellow
-        case 4: return .green
-        default: return .cyan
+        case 1, 2: return Color.appTextSecondary
+        case 3:    return Tokens.Color.warning
+        case 4:    return Tokens.Color.success
+        default:   return Tokens.Color.info
         }
     }
 }
@@ -310,7 +474,6 @@ struct AddTaskView: View {
     private var activeProfile: Profile? { profileManager.activeProfile }
     private var canAssign: Bool { (activeProfile?.canAssignTasks == true) && profiles.count > 1 }
 
-    // Common context tags for quick selection
     private let contextOptions = ["home", "computer", "phone", "outside", "focus", "errand"]
 
     var body: some View {
@@ -320,42 +483,46 @@ struct AddTaskView: View {
                 // ── Title ──
                 Section {
                     TextField("What needs doing?", text: $title, axis: .vertical)
-                        .font(.body)
+                        .font(Tokens.Typography.body)
                         .lineLimit(1...4)
                 }
 
                 // ── Time estimate ──
                 Section("Roughly how long?") {
-                    HStack(spacing: 8) {
+                    HStack(spacing: Tokens.Spacing.sm) {
                         ForEach([5, 15, 30, 60], id: \.self) { min in
                             Button {
                                 estimatedMinutes = min
                             } label: {
                                 Text("\(min)m")
-                                    .font(.subheadline)
+                                    .font(Tokens.Typography.label)
                                     .fontWeight(estimatedMinutes == min ? .semibold : .regular)
                                     .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 8)
+                                    .padding(.vertical, Tokens.Spacing.sm)
                                     .background(
                                         estimatedMinutes == min
-                                            ? Color.appAccent.opacity(0.2)
-                                            : Color.secondary.opacity(0.08),
-                                        in: RoundedRectangle(cornerRadius: 8)
+                                            ? Tokens.Color.primary.opacity(0.15)
+                                            : Color.appBackgroundSecondary,
+                                        in: RoundedRectangle(cornerRadius: Tokens.Border.radiusSmall)
                                     )
-                                    .foregroundStyle(estimatedMinutes == min ? Color.appAccent : .secondary)
+                                    .foregroundColor(
+                                        estimatedMinutes == min
+                                            ? Tokens.Color.primary
+                                            : Color.appTextSecondary
+                                    )
                             }
                             .buttonStyle(.plain)
                         }
                     }
                     Stepper("Custom: \(estimatedMinutes) min", value: $estimatedMinutes, in: 1...480, step: 5)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(Tokens.Typography.caption)
+                        .foregroundColor(Color.appTextSecondary)
                 }
 
                 // ── How does it feel? ──
                 Section("How does it feel?") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        LabeledContent("Friction (how hard to start)") {
+                    VStack(alignment: .leading, spacing: Tokens.Spacing.md) {
+                        LabeledContent("Friction (hard to start)") {
                             Picker("Friction", selection: $frictionLevel) {
                                 Text("1 Easy").tag(1)
                                 Text("2").tag(2)
@@ -404,22 +571,26 @@ struct AddTaskView: View {
                 // ── Context ──
                 Section("Context") {
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
+                        HStack(spacing: Tokens.Spacing.sm) {
                             ForEach(contextOptions, id: \.self) { tag in
                                 Button {
                                     contextTag = contextTag == tag ? "" : tag
                                 } label: {
                                     Text(tag)
-                                        .font(.caption)
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 5)
+                                        .font(Tokens.Typography.caption)
+                                        .padding(.horizontal, Tokens.Spacing.sm)
+                                        .padding(.vertical, Tokens.Spacing.xs)
                                         .background(
                                             contextTag == tag
-                                                ? Color.appAccent.opacity(0.2)
-                                                : Color.secondary.opacity(0.1),
+                                                ? Tokens.Color.primary.opacity(0.15)
+                                                : Color.appBackgroundSecondary,
                                             in: Capsule()
                                         )
-                                        .foregroundStyle(contextTag == tag ? Color.appAccent : .secondary)
+                                        .foregroundColor(
+                                            contextTag == tag
+                                                ? Tokens.Color.primary
+                                                : Color.appTextSecondary
+                                        )
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -427,8 +598,8 @@ struct AddTaskView: View {
                         .padding(.vertical, 2)
                     }
                     TextField("Or type your own", text: $contextTag)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(Tokens.Typography.caption)
+                        .foregroundColor(Color.appTextSecondary)
                 }
 
                 // ── Flags ──
@@ -446,7 +617,7 @@ struct AddTaskView: View {
                     TextField("Waiting on… (person, event, info)", text: $waitingOn)
                 }
 
-                // ── Due date (optional) ──
+                // ── Due date ──
                 Section("Due date (optional)") {
                     Toggle("Has a deadline", isOn: $showDueDatePicker.animation())
                     if showDueDatePicker {
@@ -468,13 +639,13 @@ struct AddTaskView: View {
                             Button {
                                 assignedToProfileID = profile.clientID
                             } label: {
-                                HStack(spacing: 12) {
+                                HStack(spacing: Tokens.Spacing.md) {
                                     ProfileAvatarView(profile: profile, size: 28)
-                                    Text(profile.name).foregroundStyle(.primary)
+                                    Text(profile.name).foregroundColor(Color.appTextPrimary)
                                     Spacer()
                                     if assignedToProfileID == profile.clientID {
                                         Image(systemName: "checkmark.circle.fill")
-                                            .foregroundStyle(Color.appAccent)
+                                            .foregroundColor(Tokens.Color.primary)
                                     }
                                 }
                             }
@@ -503,12 +674,12 @@ struct AddTaskView: View {
                         .fontWeight(.semibold)
                 }
             }
-            .onAppear { onAppear() }
+            .onAppear { assignedToProfileID = activeProfile?.clientID }
         }
     }
 
     private func save() {
-        let task = Task(
+        let task = AgendaTask(
             title: title.trimmingCharacters(in: .whitespaces),
             frictionLevel: frictionLevel,
             energyRequired: energyRequired,
@@ -529,11 +700,5 @@ struct AddTaskView: View {
         modelContext.insert(task)
         try? modelContext.save()
         isPresented = false
-    }
-
-    // MARK: Lifecycle
-
-    func onAppear() {
-        assignedToProfileID = activeProfile?.clientID
     }
 }

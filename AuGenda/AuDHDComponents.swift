@@ -117,7 +117,6 @@ struct AuDHDButton: View {
         .disabled(isDisabled || isLoading)
         .opacity(isDisabled ? 0.6 : 1.0)
         .focusable()
-        .focused()
     }
 
     private var foregroundColor: Color {
@@ -162,7 +161,7 @@ struct AuDHDInput: View {
     let helperText: String?
     @Binding var text: String
     var axis: Axis = .horizontal
-    var lineLimit: ClosedRange<Int>? = 1...1
+    var lineLimit: ClosedRange<Int> = 1...1
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.md) {
@@ -388,11 +387,41 @@ struct StatusAlert: View {
 // MARK: - Color Helpers (extension on SwiftUI.Color)
 
 extension Color {
-    static let appBackground = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(AppColor.slate900) : UIColor(AppColor.white) })
-    static let appBackgroundSecondary = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(AppColor.slate800) : UIColor(AppColor.slate50) })
-    static let appTextPrimary = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(AppColor.white) : UIColor(AppColor.slate900) })
-    static let appTextSecondary = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(AppColor.slate400) : UIColor(AppColor.slate600) })
-    static let appBorder = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(AppColor.slate700) : UIColor(AppColor.slate200) })
+    static let appBackground: Color = {
+        #if os(iOS)
+        return Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(AppColor.slate900) : UIColor(AppColor.white) })
+        #else
+        return Color(NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(AppColor.slate900) : NSColor(AppColor.white) })
+        #endif
+    }()
+    static let appBackgroundSecondary: Color = {
+        #if os(iOS)
+        return Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(AppColor.slate800) : UIColor(AppColor.slate50) })
+        #else
+        return Color(NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(AppColor.slate800) : NSColor(AppColor.slate50) })
+        #endif
+    }()
+    static let appTextPrimary: Color = {
+        #if os(iOS)
+        return Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(AppColor.white) : UIColor(AppColor.slate900) })
+        #else
+        return Color(NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(AppColor.white) : NSColor(AppColor.slate900) })
+        #endif
+    }()
+    static let appTextSecondary: Color = {
+        #if os(iOS)
+        return Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(AppColor.slate400) : UIColor(AppColor.slate600) })
+        #else
+        return Color(NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(AppColor.slate400) : NSColor(AppColor.slate600) })
+        #endif
+    }()
+    static let appBorder: Color = {
+        #if os(iOS)
+        return Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(AppColor.slate700) : UIColor(AppColor.slate200) })
+        #else
+        return Color(NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(AppColor.slate700) : NSColor(AppColor.slate200) })
+        #endif
+    }()
     static let appAccent = AppColor.blue500
 }
 

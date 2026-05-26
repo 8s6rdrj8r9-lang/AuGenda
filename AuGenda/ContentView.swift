@@ -452,24 +452,25 @@ struct AgendaItemRowView: View {
 // MARK: - Friction Dots
 
 struct FrictionDots: View {
-    let level: Int
+    let level: Int  // 1–5: how hard starting feels (1 = effortless, 5 = very hard)
 
     var body: some View {
         HStack(spacing: 3) {
             ForEach(1...5, id: \.self) { dot in
                 Circle()
-                    .fill(dot <= level ? frictionColor : Color.secondary.opacity(0.2))
+                    .fill(dot <= level ? frictionColor : Color.appBorder.opacity(0.5))
                     .frame(width: 5, height: 5)
             }
         }
+        .accessibilityLabel("Friction \(level) of 5")
     }
 
     private var frictionColor: Color {
         switch level {
-        case 1, 2: return .green
-        case 3: return .yellow
-        case 4: return .orange
-        default: return .red
+        case 1, 2: return Tokens.Color.success   // easy: green
+        case 3:    return Tokens.Color.info       // medium: blue
+        case 4:    return Tokens.Color.warning    // hard: amber
+        default:   return Tokens.Color.warning    // very hard: amber (not red)
         }
     }
 }
@@ -1060,15 +1061,11 @@ private struct ChildItemCard: View {
 }
 
 // MARK: - Color Extensions
-
-extension Color {
-    #if canImport(UIKit)
-    static let appBackground = Color(UIColor.systemBackground)
-    #else
-    static let appBackground = Color(NSColor.windowBackgroundColor)
-    #endif
-    static let appAccent = Color.cyan
-}
+//
+// Adaptive Color.app* extensions live in AuDHDComponents.swift (single source
+// of truth so both old views and the new design system see the same colors).
+// The duplicate definition that used to be here was removed to fix
+// "ambiguous use of 'appBackground'" macOS compile errors.
 
 // MARK: - Calendar Extension
 

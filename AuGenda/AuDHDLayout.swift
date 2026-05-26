@@ -138,7 +138,7 @@ struct CollapsibleSection<Content: View>: View {
 
 // MARK: - Tab Navigation Item
 
-enum AppTab: String, CaseIterable {
+enum NavigationTab: String, CaseIterable {
     case today = "Today"
     case tasks = "Tasks"
     case blocks = "Blocks"
@@ -163,8 +163,8 @@ enum AppTab: String, CaseIterable {
 // MARK: - Tab Bar (Mobile)
 
 struct TabBar: View {
-    @Binding var selectedTab: AppTab
-    var tabs: [AppTab] = AppTab.allCases
+    @Binding var selectedTab: NavigationTab
+    var tabs: [NavigationTab] = NavigationTab.allCases
 
     var body: some View {
         VStack(spacing: 0) {
@@ -205,8 +205,8 @@ struct TabBar: View {
 // MARK: - Sidebar Navigation (Desktop)
 
 struct Sidebar: View {
-    @Binding var selectedTab: AppTab
-    var tabs: [AppTab] = AppTab.allCases
+    @Binding var selectedTab: NavigationTab
+    var tabs: [NavigationTab] = NavigationTab.allCases
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.md) {
@@ -253,13 +253,13 @@ struct Sidebar: View {
 // MARK: - Navigation Layout
 
 struct NavigationLayout<Content: View>: View {
-    @Binding var selectedTab: AppTab
+    @Binding var selectedTab: NavigationTab
     let content: Content
-    var tabs: [AppTab] = AppTab.allCases
+    var tabs: [NavigationTab] = NavigationTab.allCases
 
     init(
-        selectedTab: Binding<AppTab>,
-        tabs: [AppTab] = AppTab.allCases,
+        selectedTab: Binding<NavigationTab>,
+        tabs: [NavigationTab] = NavigationTab.allCases,
         @ViewBuilder content: () -> Content
     ) {
         self._selectedTab = selectedTab
@@ -355,9 +355,9 @@ struct EmptyState: View {
 // MARK: - Preview
 
 #Preview {
-    @State var selectedTab: AppTab = .today
+    @Previewable @State var selectedTab: NavigationTab = .today
 
-    return NavigationLayout(selectedTab: $selectedTab) {
+    NavigationLayout(selectedTab: $selectedTab) {
         ScreenContainer {
             VStack(spacing: Tokens.Spacing.xl) {
                 SectionHeader(

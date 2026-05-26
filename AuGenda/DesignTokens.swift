@@ -254,6 +254,7 @@ enum AppColor {
     static let slate500 = SwiftUI.Color(red: 100/255, green: 116/255, blue: 139/255)  // #64748B
     static let slate600 = SwiftUI.Color(red: 71/255, green: 85/255, blue: 105/255)    // #475569
     static let slate700 = SwiftUI.Color(red: 51/255, green: 65/255, blue: 85/255)     // #334155
+    static let slate800 = SwiftUI.Color(red: 30/255, green: 41/255, blue: 59/255)     // #1E293B
     static let slate900 = SwiftUI.Color(red: 15/255, green: 23/255, blue: 42/255)     // #0F172A
 
     // Whites & Blacks
