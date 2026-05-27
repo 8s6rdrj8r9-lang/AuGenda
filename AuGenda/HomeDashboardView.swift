@@ -75,6 +75,10 @@ struct HomeDashboardView: View {
     /// Hyperfocus banner state — local-dismissable for a session.
     @State private var hyperfocusWarningDismissed: Bool = false
 
+    /// Density-advisor cooldown timestamp. View is reactive on this so
+    /// the nudge disappears immediately when the user taps "Not now."
+    @AppStorage("density.advisor.dismissedUntilTS") private var advisorDismissedUntilTS: Double = 0
+
     @State private var selectedItem: AgendaItem?
     @State private var selectedTask: AgendaTask?
     @State private var selectedBlock: Block?
@@ -185,6 +189,13 @@ struct HomeDashboardView: View {
         !recoveryDismissed && InterruptionContext.shouldShowRecovery
     }
 
+    /// Pattern-detected density advisory. Suppressed during the cooldown
+    /// window the user set by tapping "Not now."
+    private var advisorSuggestion: DensityAdvisor.Suggestion? {
+        if advisorDismissedUntilTS > Date.now.timeIntervalSince1970 { return nil }
+        return DensityAdvisor.suggestion(currentDensity: density)
+    }
+
     // MARK: - Hyperfocus elapsed
 
     private var hyperfocusMinutesElapsed: Int {
@@ -221,6 +232,19 @@ struct HomeDashboardView: View {
                         onTapEnergy: { showEnergyCheck = true },
                         onTapCapacity: { showDensityPicker = true }
                     )
+
+                    if let suggestion = advisorSuggestion {
+                        DensityAdvisoryRow(
+                            suggestion: suggestion,
+                            onApply: {
+                                pinDensity(suggestion.target)
+                                advisorDismissedUntilTS = 0
+                            },
+                            onDismiss: dismissAdvisor
+                        )
+                        .padding(.horizontal, Tokens.Spacing.base)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
 
                     PrimaryActionZone(
                         content: primaryContent,
@@ -410,6 +434,12 @@ struct HomeDashboardView: View {
         }
     }
 
+    private func dismissAdvisor() {
+        withAnimation(Tokens.Animation.standardEase(reduce: reduceMotion)) {
+            advisorDismissedUntilTS = Date.now.timeIntervalSince1970 + 60 * 60   // 1 hour cooldown
+        }
+    }
+
     /// One-time migration from the legacy device-local @AppStorage key to
     /// per-profile `ProfilePreferences.densityPinnedRaw`. Runs on every
     /// dashboard appearance until the legacy key is cleared; safe to call
@@ -543,6 +573,54 @@ private struct OrientationAnchor: View {
         case 17..<22: return "Evening"
         default:      return "Late"
         }
+    }
+}
+
+
+// MARK: - Density Advisory Row
+//
+// Soft pattern-detection nudge that appears just below the anchor when
+// recent activity suggests a different capacity level might fit better.
+// Suggestions are ADVISORY — applied only when the user taps Apply.
+// Tapping Not now silences the nudge for an hour via @AppStorage cooldown.
+
+private struct DensityAdvisoryRow: View {
+    let suggestion: DensityAdvisor.Suggestion
+    let onApply: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Tokens.Spacing.md) {
+            Image(systemName: "lightbulb.fill")
+                .font(.system(size: 14))
+                .foregroundColor(Tokens.Color.warning)
+                .padding(.top, 2)
+
+            Text(suggestion.reason)
+                .font(Tokens.Typography.caption)
+                .foregroundColor(Color.appTextPrimary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: Tokens.Spacing.sm)
+
+            VStack(alignment: .trailing, spacing: Tokens.Spacing.xs) {
+                Button("Apply", action: onApply)
+                    .font(Tokens.Typography.caption)
+                    .fontWeight(.semibold)
+                    .foregroundColor(Color.appAccent)
+                    .buttonStyle(.plain)
+
+                Button("Not now", action: onDismiss)
+                    .font(Tokens.Typography.caption)
+                    .foregroundColor(Color.appTextSecondary)
+                    .buttonStyle(.plain)
+            }
+        }
+        .padding(Tokens.Spacing.md)
+        .background(Tokens.Color.warning.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusMedium))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -1139,6 +1217,7 @@ private struct AgendaItemDetailSheet: View {
     }
 
     private func completeItem() {
+        ActivityLog.recordCompletion()
         item.isComplete = true
         item.completedAt = .now
         item.updatedAt = .now
@@ -1148,6 +1227,7 @@ private struct AgendaItemDetailSheet: View {
     }
 
     private func snooze(minutes: Int) {
+        ActivityLog.recordSnooze()
         notificationManager.snooze(item: item, minutes: minutes)
         item.snoozedUntil = Date.now.addingTimeInterval(Double(minutes) * 60)
         item.updatedAt = .now

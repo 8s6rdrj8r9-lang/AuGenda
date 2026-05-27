@@ -37,6 +37,57 @@ enum EnergyCheckInTracker {
     }
 }
 
+// MARK: - Activity Log (UserDefaults-backed)
+
+/// Records user-initiated snooze + completion timestamps for the
+/// `DensityAdvisor` pattern detector. Per-event-type ring buffers, capped
+/// to the last 50 entries each, no SwiftData write per event.
+///
+/// The log is deliberately fire-and-forget: callers do not need to error-
+/// check it, and a missing record is acceptable (the advisor is advisory).
+enum ActivityLog {
+    private static let defaults = UserDefaults.standard
+    private static let snoozesKey = "activity.snoozes"
+    private static let completionsKey = "activity.completions"
+    private static let cap = 50
+
+    // MARK: Record
+
+    static func recordSnooze() { push(snoozesKey) }
+    static func recordCompletion() { push(completionsKey) }
+
+    // MARK: Query
+
+    static func snoozes(inLastMinutes minutes: Int) -> Int {
+        count(snoozesKey, sinceMinutes: minutes)
+    }
+
+    static func completions(inLastMinutes minutes: Int) -> Int {
+        count(completionsKey, sinceMinutes: minutes)
+    }
+
+    /// Wipe all activity. Used by tests or for explicit "fresh start" flows.
+    static func clear() {
+        defaults.removeObject(forKey: snoozesKey)
+        defaults.removeObject(forKey: completionsKey)
+    }
+
+    // MARK: Internals
+
+    private static func push(_ key: String) {
+        var stamps = (defaults.array(forKey: key) as? [Double]) ?? []
+        stamps.append(Date.now.timeIntervalSince1970)
+        if stamps.count > cap { stamps = Array(stamps.suffix(cap)) }
+        defaults.set(stamps, forKey: key)
+    }
+
+    private static func count(_ key: String, sinceMinutes minutes: Int) -> Int {
+        let threshold = Date.now.addingTimeInterval(-Double(minutes * 60)).timeIntervalSince1970
+        let stamps = (defaults.array(forKey: key) as? [Double]) ?? []
+        return stamps.filter { $0 >= threshold }.count
+    }
+}
+
 // MARK: - Interruption Context (UserDefaults-backed)
 
 /// Lightweight, synchronous storage for tracking where the user left off.
@@ -469,6 +520,7 @@ struct TaskCard: View {
     // MARK: - Actions
 
     private func completeItem() {
+        ActivityLog.recordCompletion()
         withAnimation(Tokens.Animation.standardSpring()) {
             item.isComplete = true
             item.completedAt = .now
@@ -482,6 +534,7 @@ struct TaskCard: View {
     }
 
     private func snooze(minutes: Int) {
+        ActivityLog.recordSnooze()
         notificationManager.snooze(item: item, minutes: minutes)
         item.snoozedUntil = Date.now.addingTimeInterval(Double(minutes) * 60)
         item.updatedAt = .now

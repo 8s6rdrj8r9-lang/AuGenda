@@ -235,6 +235,7 @@ struct TaskDetailView: View {
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            ActivityLog.recordCompletion()
             task.isComplete = true
             task.completedAt = .now
             task.updatedAt = .now

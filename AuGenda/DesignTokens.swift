@@ -361,3 +361,63 @@ enum DensityMode: String, CaseIterable, Sendable {
 private struct DensityModeKey: EnvironmentKey {
     static let defaultValue: DensityMode = .functional
 }
+
+// MARK: - DensityMode neighbour helper
+
+extension DensityMode {
+    /// Step to the next mode in the given direction (-1 = lower / calmer,
+    /// +1 = higher / busier). Returns nil at the edges.
+    func next(direction: Int) -> DensityMode? {
+        let all = DensityMode.allCases
+        guard let idx = all.firstIndex(of: self) else { return nil }
+        let target = idx + direction
+        guard all.indices.contains(target) else { return nil }
+        return all[target]
+    }
+}
+
+// MARK: - Density Advisor (Pattern-Detected Suggestion)
+//
+// Pure logic — given the current density and the user's recent activity,
+// produce an optional suggestion to drop (calmer) or raise (busier). Per
+// Session 1's design: "automatic but ADVISORY — never auto-applied."
+//
+// Rules:
+//   * 3+ snoozes in the last 15 min          → suggest dropping one level
+//   * 3+ completions in 30 min, no snoozes   → suggest raising one level
+//
+// The view layer is responsible for dismissal (1-hour cooldown via
+// AppStorage so it reactively re-renders); the advisor itself is stateless.
+
+enum DensityAdvisor {
+
+    struct Suggestion: Equatable {
+        let target: DensityMode
+        let reason: String
+    }
+
+    static func suggestion(currentDensity: DensityMode) -> Suggestion? {
+        let recentSnoozes     = ActivityLog.snoozes(inLastMinutes: 15)
+        let recentCompletions = ActivityLog.completions(inLastMinutes: 30)
+
+        // Drop one level when snoozes are cascading.
+        if recentSnoozes >= 3, let lower = currentDensity.next(direction: -1) {
+            let plural = recentSnoozes == 1 ? "" : "s"
+            return Suggestion(
+                target: lower,
+                reason: "You've snoozed \(recentSnoozes) task\(plural) recently. Try \(lower.label) capacity?"
+            )
+        }
+
+        // Raise one level when there's sustained progress without snoozes.
+        if recentCompletions >= 3, recentSnoozes == 0,
+           let higher = currentDensity.next(direction: 1) {
+            return Suggestion(
+                target: higher,
+                reason: "You're on a roll — \(recentCompletions) done. Open up to \(higher.label) capacity?"
+            )
+        }
+
+        return nil
+    }
+}

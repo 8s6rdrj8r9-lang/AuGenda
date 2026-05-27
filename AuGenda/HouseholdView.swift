@@ -242,6 +242,7 @@ private struct HouseholdItemRow: View {
     }
 
     private func complete() {
+        ActivityLog.recordCompletion()
         withAnimation(.spring(duration: 0.3)) {
             item.isComplete = true
             item.completedAt = .now

@@ -140,6 +140,7 @@ struct ContentView: View {
             predicate: #Predicate { $0.clientID == uuid }
         )
         guard let item = (try? modelContext.fetch(descriptor))?.first else { return }
+        ActivityLog.recordCompletion()
         item.isComplete = true
         item.completedAt = .now
         item.updatedAt = .now
@@ -159,6 +160,7 @@ struct ContentView: View {
             predicate: #Predicate { $0.clientID == uuid }
         )
         guard let item = (try? modelContext.fetch(descriptor))?.first else { return }
+        ActivityLog.recordSnooze()
         notificationManager.snooze(item: item, minutes: minutes)
         item.snoozedUntil = Date.now.addingTimeInterval(Double(minutes) * 60)
         item.updatedAt = .now
@@ -436,6 +438,7 @@ struct AgendaItemRowView: View {
     }
 
     private func completeItem() {
+        ActivityLog.recordCompletion()
         withAnimation(.spring(duration: 0.3)) {
             item.isComplete = true
             item.completedAt = .now
@@ -449,6 +452,7 @@ struct AgendaItemRowView: View {
     }
 
     private func snooze(minutes: Int) {
+        ActivityLog.recordSnooze()
         notificationManager.snooze(item: item, minutes: minutes)
         item.snoozedUntil = Date.now.addingTimeInterval(Double(minutes) * 60)
         item.updatedAt = .now
@@ -1077,6 +1081,7 @@ private struct ChildItemCard: View {
     }
 
     private func complete() {
+        ActivityLog.recordCompletion()
         tapped = true
         withAnimation(.spring(duration: 0.3)) {
             item.isComplete = true
