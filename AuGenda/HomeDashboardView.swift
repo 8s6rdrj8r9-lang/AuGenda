@@ -24,8 +24,9 @@
 //
 // Density is derived from `currentEnergyLevel` and may be pinned by the
 // user via the anchor's capacity badge. The pinned override is persisted
-// device-local via @AppStorage (per Session 1's "manual override is one
-// tap away" principle).
+// per-profile on `ProfilePreferences.densityPinned` (SwiftData + CloudKit
+// synced), with a one-time migration from the legacy device-local
+// @AppStorage("home.dashboard.density.pinned") key.
 //
 // NOT yet wired into ContentView's TabView — TodayView remains the default
 // for now. Swap `TodayView()` → `HomeDashboardView()` in ContentView when
@@ -41,6 +42,7 @@ struct HomeDashboardView: View {
     // MARK: Dependencies
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var profileManager: ActiveProfileManager
     @EnvironmentObject private var notificationManager: NotificationManager
     @EnvironmentObject private var blockManager: BlockManager
@@ -75,6 +77,7 @@ struct HomeDashboardView: View {
 
     @State private var selectedItem: AgendaItem?
     @State private var selectedTask: AgendaTask?
+    @State private var selectedBlock: Block?
     @State private var showEnergyCheck: Bool = false
     @State private var showDensityPicker: Bool = false
 
@@ -239,7 +242,8 @@ struct HomeDashboardView: View {
                             tomorrowItems: tomorrowItems,
                             completedToday: completedToday,
                             onTapItem: { selectedItem = $0 },
-                            onTapTask: { selectedTask = $0 }
+                            onTapTask: { selectedTask = $0 },
+                            onTapBlock: { selectedBlock = $0 }
                         )
                         .padding(.horizontal, Tokens.Spacing.base)
                     }
@@ -258,13 +262,13 @@ struct HomeDashboardView: View {
                         isShowing: .constant(true),
                         minutesElapsed: hyperfocusMinutesElapsed,
                         onContinue: {
-                            withAnimation(Tokens.Animation.standardEase()) {
+                            withAnimation(Tokens.Animation.standardEase(reduce: reduceMotion)) {
                                 hyperfocusWarningDismissed = true
                             }
                         },
                         onTakeBreak: {
                             notificationManager.endFocusSession()
-                            withAnimation(Tokens.Animation.standardEase()) {
+                            withAnimation(Tokens.Animation.standardEase(reduce: reduceMotion)) {
                                 hyperfocusWarningDismissed = true
                             }
                         }
@@ -281,6 +285,13 @@ struct HomeDashboardView: View {
             }
             .sheet(item: $selectedTask) { task in
                 TaskDetailView(task: task)
+                    #if os(iOS)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                    #endif
+            }
+            .sheet(item: $selectedBlock) { block in
+                BlockDetailView(block: block)
                     #if os(iOS)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
@@ -378,14 +389,14 @@ struct HomeDashboardView: View {
 
     private func dismissRecovery() {
         InterruptionContext.clear()
-        withAnimation(Tokens.Animation.standardEase()) {
+        withAnimation(Tokens.Animation.standardEase(reduce: reduceMotion)) {
             recoveryDismissed = true
         }
     }
 
     private func pinDensity(_ mode: DensityMode) {
         guard let prefs = activePrefs else { return }
-        withAnimation(Tokens.Animation.standardEase()) {
+        withAnimation(Tokens.Animation.standardEase(reduce: reduceMotion)) {
             prefs.densityPinned = mode
             try? modelContext.save()
         }
@@ -393,7 +404,7 @@ struct HomeDashboardView: View {
 
     private func clearPinnedDensity() {
         guard let prefs = activePrefs else { return }
-        withAnimation(Tokens.Animation.standardEase()) {
+        withAnimation(Tokens.Animation.standardEase(reduce: reduceMotion)) {
             prefs.densityPinned = nil
             try? modelContext.save()
         }
@@ -676,6 +687,7 @@ private struct MomentumSurface: View {
 
     let onTapItem: (AgendaItem) -> Void
     let onTapTask: (AgendaTask) -> Void
+    let onTapBlock: (Block) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.xl) {
@@ -715,7 +727,7 @@ private struct MomentumSurface: View {
             if !activeBlocks.isEmpty {
                 MomentumSection(title: "Routines", count: activeBlocks.count) {
                     ForEach(activeBlocks) { block in
-                        BlockSummaryCard(block: block)
+                        BlockSummaryCard(block: block) { onTapBlock(block) }
                     }
                 }
             }
@@ -830,36 +842,40 @@ private struct MomentumSection<Content: View>: View {
 
 private struct BlockSummaryCard: View {
     let block: Block
+    var onTap: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: Tokens.Spacing.md) {
-            Image(systemName: block.icon)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundColor(Color.appAccent)
-                .frame(width: 28)
+        Button(action: onTap) {
+            HStack(spacing: Tokens.Spacing.md) {
+                Image(systemName: block.icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(Color.appAccent)
+                    .frame(width: 28)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(block.displayName)
-                    .font(Tokens.Typography.h3)
-                    .fontWeight(.bold)
-                    .foregroundColor(Color.appTextPrimary)
-                Text("\(block.completedTaskCount) of \(block.totalTaskCount) done")
-                    .font(Tokens.Typography.caption)
-                    .foregroundColor(Color.appTextSecondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(block.displayName)
+                        .font(Tokens.Typography.h3)
+                        .fontWeight(.bold)
+                        .foregroundColor(Color.appTextPrimary)
+                    Text("\(block.completedTaskCount) of \(block.totalTaskCount) done")
+                        .font(Tokens.Typography.caption)
+                        .foregroundColor(Color.appTextSecondary)
+                }
+
+                Spacer()
+
+                if block.currentStreak > 0 {
+                    Label("\(block.currentStreak)", systemImage: "flame.fill")
+                        .font(Tokens.Typography.caption)
+                        .foregroundColor(Tokens.Color.warning)
+                }
             }
-
-            Spacer()
-
-            if block.currentStreak > 0 {
-                Label("\(block.currentStreak)", systemImage: "flame.fill")
-                    .font(Tokens.Typography.caption)
-                    .foregroundColor(Tokens.Color.warning)
-            }
+            .padding(Tokens.Spacing.lg)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.appBackgroundSecondary)
+            .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusMedium))
         }
-        .padding(Tokens.Spacing.lg)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.appBackgroundSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusMedium))
+        .buttonStyle(.plain)
     }
 }
 
