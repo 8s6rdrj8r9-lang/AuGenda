@@ -291,4 +291,73 @@ extension EnvironmentValues {
         get { self[LowStimulationModeKey.self] }
         set { self[LowStimulationModeKey.self] = newValue }
     }
+
+    var densityMode: DensityMode {
+        get { self[DensityModeKey.self] }
+        set { self[DensityModeKey.self] = newValue }
+    }
+}
+
+// MARK: - Density Mode (Adaptive Capacity)
+//
+// Drives adaptive density across Home (and any other adaptive surface).
+// Default derivation is from `ProfilePreferences.currentEnergyLevel`; the
+// user may pin a mode manually via the OrientationAnchor on Home.
+//
+// Mapping (per Session 1 strategic design):
+//   energy 1   → .survival    (one card, max breath)
+//   energy 2   → .low         (3–5 cards, energy-matched)
+//   energy 3   → .functional  (full today view)
+//   energy 4+  → .high        (everything: trends, spotlight, plan tools)
+
+enum DensityMode: String, CaseIterable, Sendable {
+    case survival
+    case low
+    case functional
+    case high
+
+    /// Default mapping from energy level (1–5+) to density mode.
+    static func autoFrom(energyLevel: Int) -> DensityMode {
+        switch energyLevel {
+        case ..<2:  return .survival
+        case 2:     return .low
+        case 3:     return .functional
+        default:    return .high
+        }
+    }
+
+    /// Short, human-friendly label for the capacity badge.
+    var label: String {
+        switch self {
+        case .survival:   return "Survival"
+        case .low:        return "Low"
+        case .functional: return "Functional"
+        case .high:       return "High"
+        }
+    }
+
+    /// Non-essential metadata (dots, flags, context) is hidden below this threshold.
+    var showsFullMetadata: Bool {
+        self == .functional || self == .high
+    }
+
+    /// Survival surfaces show only the Primary Action Zone — Momentum is hidden.
+    var isMinimalSurface: Bool { self == .survival }
+
+    /// High-capacity surfaces expose spotlight/tomorrow/trail sections.
+    var showsExpandedSurface: Bool { self == .high }
+
+    /// Suggested card count cap for the Momentum surface in this mode.
+    var momentumCardLimit: Int {
+        switch self {
+        case .survival:   return 0
+        case .low:        return 5
+        case .functional: return 10
+        case .high:       return 16
+        }
+    }
+}
+
+private struct DensityModeKey: EnvironmentKey {
+    static let defaultValue: DensityMode = .functional
 }

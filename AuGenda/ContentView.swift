@@ -55,6 +55,10 @@ struct ContentView: View {
 
     @State private var selectedTab: AppTab = .today
 
+    /// Beta flag: route the .today tab to the new HomeDashboardView (Session 2/3
+    /// five-zone surface). Default off; toggled from Settings → Experiments.
+    @AppStorage("home.dashboard.useNewHome") private var useNewHomeDashboard: Bool = false
+
     var body: some View {
         ZStack(alignment: .top) {
             Color.appBackground
@@ -62,7 +66,13 @@ struct ContentView: View {
 
             TabView(selection: $selectedTab) {
 
-                TodayView()
+                Group {
+                    if useNewHomeDashboard {
+                        HomeDashboardView()
+                    } else {
+                        TodayView()
+                    }
+                }
                     .tabItem {
                         Label("Today", systemImage: "calendar.day.timeline.left")
                     }
@@ -631,6 +641,8 @@ struct EnergyCheckView: View {
         prefs.currentEnergyLevel = level
         prefs.updatedAt = .now
         try? modelContext.save()
+        // Record so the OrientationAnchor's stale-energy hint can clear.
+        EnergyCheckInTracker.record()
     }
 }
 
@@ -724,9 +736,29 @@ struct SettingsView: View {
     @Query(sort: \Profile.sortOrder) private var profiles: [Profile]
     @State private var showAddProfile = false
 
+    /// Mirrors the same key as ContentView's @AppStorage.
+    @AppStorage("home.dashboard.useNewHome") private var useNewHomeDashboard: Bool = false
+
     var body: some View {
         NavigationStack {
             Form {
+                // ── Experiments ──
+                Section {
+                    Toggle(isOn: $useNewHomeDashboard) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("New Home dashboard")
+                                .fontWeight(.medium)
+                            Text("Five-zone adaptive surface. Beta.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("Experiments")
+                } footer: {
+                    Text("Reroutes the Today tab to the new HomeDashboardView. Density adapts to your energy level; pin a capacity mode via the badge on the dashboard.")
+                }
+
                 // Profiles section — each row navigates to per-profile settings
                 Section {
                     ForEach(profiles) { profile in

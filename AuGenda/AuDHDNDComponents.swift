@@ -11,6 +11,32 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - Energy Check-In Tracker (UserDefaults-backed)
+
+/// Tracks when the user last confirmed their energy level. Separate from
+/// `ProfilePreferences.updatedAt` (which fires on any preference change).
+/// Used by the OrientationAnchor to surface a subtle "stale energy" hint.
+enum EnergyCheckInTracker {
+    private static let key = "energy.lastCheckIn"
+    private static let staleThreshold: TimeInterval = 4 * 60 * 60   // 4 hours
+
+    static var lastCheckIn: Date? {
+        let ts = UserDefaults.standard.double(forKey: key)
+        return ts > 0 ? Date(timeIntervalSince1970: ts) : nil
+    }
+
+    /// Call from any code path that sets `currentEnergyLevel` from a deliberate
+    /// user action (e.g. EnergyCheckView's selection).
+    static func record() {
+        UserDefaults.standard.set(Date.now.timeIntervalSince1970, forKey: key)
+    }
+
+    static var isStale: Bool {
+        guard let last = lastCheckIn else { return true }
+        return Date.now.timeIntervalSince(last) > staleThreshold
+    }
+}
+
 // MARK: - Interruption Context (UserDefaults-backed)
 
 /// Lightweight, synchronous storage for tracking where the user left off.
@@ -870,4 +896,364 @@ private struct TaskCardPreviewHost: View {
 
 #Preview("TaskCard") {
     TaskCardPreviewHost()
+}
+
+
+// MARK: - Task Surface Data
+//
+// Common surface fields shared between AgendaItem (schedule-anchored) and
+// AgendaTask (backlog). Lets Home cards be model-agnostic without forcing
+// each model into a protocol — the cards just render what they're given.
+
+struct TaskSurfaceData {
+    let title: String
+    let scheduledDate: Date?     // nil → unscheduled / all-day
+    let dueDate: Date?
+    let frictionLevel: Int
+    let energyRequired: Int
+    let estimatedMinutes: Int
+    let contextTag: String
+    let needsBodyDouble: Bool
+    let hyperfocusRisk: Bool
+    let priority: Int            // 0 normal, 1 high, 2 urgent
+}
+
+extension TaskSurfaceData {
+    init(from item: AgendaItem) {
+        self.title           = item.title
+        self.scheduledDate   = item.isAllDay ? nil : item.scheduledDate
+        self.dueDate         = item.dueDate
+        self.frictionLevel   = item.frictionLevel
+        self.energyRequired  = item.energyRequired
+        self.estimatedMinutes = 15  // AgendaItem doesn't store an estimate; reasonable default
+        self.contextTag      = item.contextTag
+        self.needsBodyDouble = item.needsBodyDouble
+        self.hyperfocusRisk  = false  // AgendaItem doesn't track this flag
+        self.priority        = item.priority
+    }
+
+    init(from task: AgendaTask) {
+        self.title           = task.title
+        self.scheduledDate   = task.scheduledDate
+        self.dueDate         = task.dueDate
+        self.frictionLevel   = task.frictionLevel
+        self.energyRequired  = task.energyRequired
+        self.estimatedMinutes = task.totalEstimatedMinutes
+        self.contextTag      = task.contextTag
+        self.needsBodyDouble = task.needsBodyDouble
+        self.hyperfocusRisk  = task.hyperfocusRisk
+        self.priority        = task.priority
+    }
+}
+
+
+// MARK: - Primary Agenda Card
+//
+// Hero card for the Primary Action Zone on Home. Heavy title, optional time,
+// one prominent CTA. Density-adaptive: in survival/low modes the metadata
+// row collapses to nothing; in functional/high it shows the full dot row.
+//
+// Caller wires up both onTap (open detail) and onCTA (start/complete) since
+// semantics vary by what kind of subject is being presented.
+
+struct PrimaryAgendaCard: View {
+    @Environment(\.densityMode) private var density
+
+    let surface: TaskSurfaceData
+    let ctaLabel: String
+    var ctaIcon: String? = "play.fill"
+    var onTap: () -> Void = {}
+    var onCTA: () -> Void = {}
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.lg) {
+
+            // ── Title ─────────────────────────────────────────────
+            VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
+                Text(surface.title.isEmpty ? "Untitled" : surface.title)
+                    .font(Tokens.Typography.h1)
+                    .foregroundColor(Color.appTextPrimary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let timeLabel = timeLabel {
+                    Text(timeLabel)
+                        .font(Tokens.Typography.h3)
+                        .foregroundColor(Color.appTextSecondary)
+                }
+            }
+
+            // ── Metadata row (density-gated) ──────────────────────
+            if density.showsFullMetadata {
+                HStack(spacing: Tokens.Spacing.md) {
+                    if !surface.contextTag.isEmpty {
+                        Text(surface.contextTag)
+                            .font(Tokens.Typography.caption)
+                            .foregroundColor(Color.appTextSecondary)
+                    }
+
+                    if surface.needsBodyDouble {
+                        Label("Body double", systemImage: "person.wave.2.fill")
+                            .font(Tokens.Typography.caption)
+                            .foregroundColor(Tokens.Color.info)
+                            .labelStyle(.titleAndIcon)
+                    }
+
+                    if surface.hyperfocusRisk {
+                        Label("Hyperfocus", systemImage: "exclamationmark.triangle.fill")
+                            .font(Tokens.Typography.caption)
+                            .foregroundColor(Tokens.Color.warning)
+                            .labelStyle(.titleAndIcon)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    FrictionDots(level: surface.frictionLevel)
+                    EnergyDots(level: surface.energyRequired)
+                }
+                .opacity(0.85)
+            }
+
+            // ── Primary CTA ───────────────────────────────────────
+            Button(action: onCTA) {
+                HStack(spacing: Tokens.Spacing.sm) {
+                    if let icon = ctaIcon {
+                        Image(systemName: icon)
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                    Text(ctaLabel)
+                        .font(Tokens.Typography.label)
+                        .fontWeight(.semibold)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: Tokens.Spacing.touchMinimum)
+                .background(Color.appAccent)
+                .foregroundColor(.black)
+                .cornerRadius(Tokens.Border.radiusLarge)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(Tokens.Spacing.xl)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.appBackgroundSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusLarge))
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
+    }
+
+    private var timeLabel: String? {
+        if let scheduled = surface.scheduledDate {
+            return scheduled.formatted(.dateTime.hour().minute()) + " · ~\(surface.estimatedMinutes)m"
+        }
+        return "~\(surface.estimatedMinutes)m"
+    }
+}
+
+
+// MARK: - Momentum Task Card
+//
+// Density-adaptive secondary card for the Momentum Surface. Visually similar
+// to AgendaTaskCard (TaskBacklogView) but consumes the abstracted surface
+// data so it can represent either AgendaItem or AgendaTask uniformly.
+
+struct MomentumTaskCard: View {
+    @Environment(\.densityMode) private var density
+
+    let surface: TaskSurfaceData
+    var onTap: () -> Void = {}
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(alignment: .top, spacing: 0) {
+                if surface.priority > 0 {
+                    Rectangle()
+                        .fill(priorityColor)
+                        .frame(width: 3)
+                }
+
+                VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
+
+                    // Title row
+                    HStack(alignment: .firstTextBaseline, spacing: Tokens.Spacing.sm) {
+                        Text(surface.title.isEmpty ? "Untitled" : surface.title)
+                            .font(Tokens.Typography.h3)
+                            .fontWeight(.bold)
+                            .foregroundColor(Color.appTextPrimary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Spacer(minLength: 0)
+
+                        if let timeLabel = compactTimeLabel {
+                            Text(timeLabel)
+                                .font(Tokens.Typography.caption)
+                                .foregroundColor(Color.appTextSecondary)
+                        }
+                    }
+
+                    // Status row (density-gated)
+                    if density.showsFullMetadata {
+                        HStack(spacing: Tokens.Spacing.sm) {
+                            if !surface.contextTag.isEmpty {
+                                Text(surface.contextTag)
+                                    .font(Tokens.Typography.caption)
+                                    .foregroundColor(Color.appTextSecondary)
+                            }
+
+                            if surface.needsBodyDouble {
+                                Image(systemName: "person.wave.2.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(Tokens.Color.info)
+                            }
+
+                            if surface.hyperfocusRisk {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(Tokens.Color.warning)
+                            }
+
+                            Spacer(minLength: 0)
+
+                            FrictionDots(level: surface.frictionLevel)
+                            EnergyDots(level: surface.energyRequired)
+
+                            if let due = surface.dueDate {
+                                Text(due.formatted(.dateTime.month(.abbreviated).day()))
+                                    .font(Tokens.Typography.caption)
+                                    .foregroundColor(dueDateColor(due))
+                            }
+                        }
+                        .opacity(0.8)
+                    }
+                }
+                .padding(Tokens.Spacing.lg)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Color.appBackgroundSecondary)
+            .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusMedium))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var priorityColor: Color {
+        switch surface.priority {
+        case 2:  return Tokens.Color.warning
+        case 1:  return Tokens.Color.info
+        default: return .clear
+        }
+    }
+
+    private var compactTimeLabel: String? {
+        if let scheduled = surface.scheduledDate {
+            return scheduled.formatted(.dateTime.hour().minute())
+        }
+        return "~\(surface.estimatedMinutes)m"
+    }
+
+    private func dueDateColor(_ date: Date) -> Color {
+        let days = Calendar.current.dateComponents([.day], from: .now, to: date).day ?? 0
+        if days < 0  { return Tokens.Color.warning }
+        if days <= 1 { return Tokens.Color.warning }
+        return Color.appTextSecondary
+    }
+}
+
+
+// MARK: - Recovery Context Card
+//
+// Inline version of InterruptionRecoveryPrompt for the Primary Action Zone.
+// Renders "you were here N min ago" + three calm action choices. Unlike the
+// modal prompt, this card lives in the content flow and is dismissed by any
+// of its actions, not by tap-outside.
+
+struct RecoveryContextCard: View {
+    let lastItemTitle: String?
+    let gapDescription: String
+    let lastContextLabel: String?
+
+    var onResume: () -> Void
+    var onReorient: () -> Void
+    var onFresh: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.lg) {
+
+            // Header
+            HStack(spacing: Tokens.Spacing.sm) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(Tokens.Color.info)
+                Text("You were here \(gapDescription) ago")
+                    .font(Tokens.Typography.label)
+                    .foregroundColor(Color.appTextSecondary)
+            }
+
+            // Last context — the user needs to recognise this
+            if let title = lastItemTitle, !title.isEmpty {
+                VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+                    Text(title)
+                        .font(Tokens.Typography.h2)
+                        .foregroundColor(Color.appTextPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let ctx = lastContextLabel, !ctx.isEmpty {
+                        Text(ctx.capitalized)
+                            .font(Tokens.Typography.caption)
+                            .foregroundColor(Color.appTextSecondary)
+                    }
+                }
+            } else {
+                Text("Welcome back")
+                    .font(Tokens.Typography.h2)
+                    .foregroundColor(Color.appTextPrimary)
+            }
+
+            // Three equal-weight choices
+            VStack(spacing: Tokens.Spacing.sm) {
+                recoveryButton("Resume where I left off",
+                               icon: "arrow.clockwise",
+                               primary: true,
+                               action: onResume)
+                recoveryButton("Help me figure out what to do",
+                               icon: "sparkles",
+                               primary: false,
+                               action: onReorient)
+                recoveryButton("Start fresh",
+                               icon: nil,
+                               primary: false,
+                               action: onFresh)
+            }
+        }
+        .padding(Tokens.Spacing.xl)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Tokens.Color.info.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusLarge))
+    }
+
+    @ViewBuilder
+    private func recoveryButton(
+        _ title: String,
+        icon: String?,
+        primary: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: Tokens.Spacing.sm) {
+                if let icon = icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                Text(title)
+                    .font(Tokens.Typography.label)
+                    .fontWeight(.semibold)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minHeight: Tokens.Spacing.touchMinimum)
+            .padding(.horizontal, Tokens.Spacing.base)
+            .background(primary ? Color.appAccent : Color.appBackgroundSecondary)
+            .foregroundColor(primary ? .black : Color.appTextPrimary)
+            .cornerRadius(Tokens.Border.radiusMedium)
+        }
+        .buttonStyle(.plain)
+    }
 }
