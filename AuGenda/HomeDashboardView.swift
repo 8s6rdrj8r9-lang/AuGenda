@@ -67,9 +67,6 @@ struct HomeDashboardView: View {
 
     // MARK: State
 
-    /// Manual density override. nil ⇒ auto-derive from energyLevel.
-    @AppStorage("home.dashboard.density.pinned") private var pinnedDensityRaw: String = ""
-
     /// Recovery flow state — used to dismiss the inline recovery card.
     @State private var recoveryDismissed: Bool = false
 
@@ -87,15 +84,15 @@ struct HomeDashboardView: View {
     private var activePrefs: ProfilePreferences? { profileManager.activePreferences }
     private var energyLevel: Int { activePrefs?.currentEnergyLevel ?? 3 }
 
-    /// Effective density mode = pinned override OR auto-derived from energy.
+    /// Effective density mode = pinned (per-profile) OR auto-derived from energy.
     private var density: DensityMode {
-        if !pinnedDensityRaw.isEmpty, let pinned = DensityMode(rawValue: pinnedDensityRaw) {
+        if let pinned = activePrefs?.densityPinned {
             return pinned
         }
         return DensityMode.autoFrom(energyLevel: energyLevel)
     }
 
-    private var isDensityPinned: Bool { !pinnedDensityRaw.isEmpty }
+    private var isDensityPinned: Bool { activePrefs?.densityPinned != nil }
 
     /// Tasks visible to the active profile (with the unassigned-legacy fallthrough).
     private var profileItems: [AgendaItem] {
@@ -307,6 +304,7 @@ struct HomeDashboardView: View {
             }
         }
         .onAppear {
+            migrateLegacyDensityPinIfNeeded()
             InterruptionContext.recordActivity(contextLabel: "home dashboard")
         }
     }
@@ -386,15 +384,45 @@ struct HomeDashboardView: View {
     }
 
     private func pinDensity(_ mode: DensityMode) {
+        guard let prefs = activePrefs else { return }
         withAnimation(Tokens.Animation.standardEase()) {
-            pinnedDensityRaw = mode.rawValue
+            prefs.densityPinned = mode
+            try? modelContext.save()
         }
     }
 
     private func clearPinnedDensity() {
+        guard let prefs = activePrefs else { return }
         withAnimation(Tokens.Animation.standardEase()) {
-            pinnedDensityRaw = ""
+            prefs.densityPinned = nil
+            try? modelContext.save()
         }
+    }
+
+    /// One-time migration from the legacy device-local @AppStorage key to
+    /// per-profile `ProfilePreferences.densityPinnedRaw`. Runs on every
+    /// dashboard appearance until the legacy key is cleared; safe to call
+    /// repeatedly (no-op once the key is gone).
+    private static let legacyPinKey = "home.dashboard.density.pinned"
+
+    private func migrateLegacyDensityPinIfNeeded() {
+        let defaults = UserDefaults.standard
+        let legacy = defaults.string(forKey: Self.legacyPinKey) ?? ""
+        guard !legacy.isEmpty else { return }
+
+        // Only adopt the legacy value if the active profile has no pin set yet —
+        // a fresh per-profile decision always wins over the device-global one.
+        if let prefs = activePrefs, prefs.densityPinnedRaw.isEmpty,
+           DensityMode(rawValue: legacy) != nil {
+            prefs.densityPinnedRaw = legacy
+            prefs.updatedAt = .now
+            try? modelContext.save()
+        }
+
+        // Clear regardless — we only migrate once. If there's no active
+        // profile yet (very first launch), the legacy value is dropped;
+        // that's acceptable for a beta surface.
+        defaults.removeObject(forKey: Self.legacyPinKey)
     }
 }
 

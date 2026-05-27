@@ -287,6 +287,11 @@ final class ProfilePreferences {
     var energyTrackingEnabled: Bool = true
     var lowEFMaxFriction: Int = 2
 
+    /// Home dashboard density mode pinned by the user. Empty = auto-derive
+    /// from `currentEnergyLevel` via DensityMode.autoFrom. Stored as raw
+    /// String so SwiftData + CloudKit migrations stay additive.
+    var densityPinnedRaw: String = ""
+
     // MARK: Focus sessions
     var focusSessionMinutes: Int = 25
     var breakMinutes: Int = 10
@@ -343,6 +348,19 @@ final class ProfilePreferences {
     var appFont: AppFont {
         get { AppFont(rawValue: appFontRaw) ?? .system }
         set { appFontRaw = newValue.rawValue }
+    }
+
+    /// Pinned density mode for the Home dashboard. nil → auto-derive from
+    /// `currentEnergyLevel`. Setting to nil clears the pin.
+    var densityPinned: DensityMode? {
+        get {
+            guard !densityPinnedRaw.isEmpty else { return nil }
+            return DensityMode(rawValue: densityPinnedRaw)
+        }
+        set {
+            densityPinnedRaw = newValue?.rawValue ?? ""
+            updatedAt = .now
+        }
     }
 
     // MARK: Preset factory
