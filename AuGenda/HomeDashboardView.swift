@@ -250,6 +250,8 @@ struct HomeDashboardView: View {
                         content: primaryContent,
                         onOpenItem: { selectedItem = $0 },
                         onOpenTask: { selectedTask = $0 },
+                        onDeferItem: deferToTomorrow(item:),
+                        onDeferTask: deferToTomorrow(task:),
                         onResumeRecovery: dismissRecovery,
                         onReorientRecovery: { dismissRecovery(); showEnergyCheck = true },
                         onFreshRecovery: dismissRecovery
@@ -438,6 +440,33 @@ struct HomeDashboardView: View {
         withAnimation(Tokens.Animation.standardEase(reduce: reduceMotion)) {
             advisorDismissedUntilTS = Date.now.timeIntervalSince1970 + 60 * 60   // 1 hour cooldown
         }
+    }
+
+    // MARK: - Defer-to-tomorrow (Survival's "Not today" path)
+
+    /// Defer a scheduled item until tomorrow's start. Wraps the existing
+    /// snooze pipeline so notifications + watch sync stay coherent, and
+    /// records the snooze for the DensityAdvisor.
+    private func deferToTomorrow(item: AgendaItem) {
+        let cal = Calendar.current
+        let tomorrowStart = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: .now)) ?? Date.now.addingTimeInterval(12 * 60 * 60)
+        let minutes = max(1, Int(tomorrowStart.timeIntervalSinceNow / 60))
+        ActivityLog.recordSnooze()
+        notificationManager.snooze(item: item, minutes: minutes)
+        item.snoozedUntil = tomorrowStart
+        item.updatedAt = .now
+        try? modelContext.save()
+    }
+
+    /// Defer a backlog task until tomorrow via `isDeferredUntil` (no
+    /// notifications to reschedule for AgendaTask). Also counted by the advisor.
+    private func deferToTomorrow(task: AgendaTask) {
+        let cal = Calendar.current
+        let tomorrowStart = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: .now)) ?? Date.now.addingTimeInterval(12 * 60 * 60)
+        ActivityLog.recordSnooze()
+        task.isDeferredUntil = tomorrowStart
+        task.updatedAt = .now
+        try? modelContext.save()
     }
 
     /// One-time migration from the legacy device-local @AppStorage key to
@@ -632,6 +661,8 @@ private struct PrimaryActionZone: View {
 
     let onOpenItem: (AgendaItem) -> Void
     let onOpenTask: (AgendaTask) -> Void
+    let onDeferItem: (AgendaItem) -> Void
+    let onDeferTask: (AgendaTask) -> Void
     let onResumeRecovery: () -> Void
     let onReorientRecovery: () -> Void
     let onFreshRecovery: () -> Void
@@ -660,7 +691,9 @@ private struct PrimaryActionZone: View {
                 ctaLabel: "Start",
                 ctaIcon: "play.fill",
                 onTap: { onOpenItem(item) },
-                onCTA: { onOpenItem(item) }
+                onCTA: { onOpenItem(item) },
+                secondaryLabel: "Not today",
+                onSecondary: { onDeferItem(item) }
             )
 
         case .topTask(let task):
@@ -669,7 +702,9 @@ private struct PrimaryActionZone: View {
                 ctaLabel: "Open",
                 ctaIcon: "arrow.right",
                 onTap: { onOpenTask(task) },
-                onCTA: { onOpenTask(task) }
+                onCTA: { onOpenTask(task) },
+                secondaryLabel: "Not today",
+                onSecondary: { onDeferTask(task) }
             )
 
         case .empty:

@@ -1018,6 +1018,13 @@ struct PrimaryAgendaCard: View {
     var onTap: () -> Void = {}
     var onCTA: () -> Void = {}
 
+    /// Optional secondary action (defer / skip / "Not today"). Rendered as a
+    /// quiet text button under the primary CTA when both label + callback are
+    /// supplied. In Survival mode this is the user's only way out other than
+    /// "Start", so the surrounding layout grows the card to hero size.
+    var secondaryLabel: String? = nil
+    var onSecondary: (() -> Void)? = nil
+
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.lg) {
 
@@ -1067,6 +1074,13 @@ struct PrimaryAgendaCard: View {
                 .opacity(0.85)
             }
 
+            // ── Survival hero spacer: pushes the action toward the bottom
+            //    so the card visibly *is* the screen. In other modes the
+            //    card sizes to content as before.
+            if density.isMinimalSurface {
+                Spacer(minLength: Tokens.Spacing.xxl)
+            }
+
             // ── Primary CTA ───────────────────────────────────────
             Button(action: onCTA) {
                 HStack(spacing: Tokens.Spacing.sm) {
@@ -1085,9 +1099,23 @@ struct PrimaryAgendaCard: View {
                 .cornerRadius(Tokens.Border.radiusLarge)
             }
             .buttonStyle(.plain)
+
+            // ── Secondary action (quiet text button) ──────────────
+            if let secondaryLabel, let onSecondary {
+                Button(action: onSecondary) {
+                    Text(secondaryLabel)
+                        .font(Tokens.Typography.label)
+                        .foregroundColor(Color.appTextSecondary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: Tokens.Spacing.touchMinimum)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .padding(Tokens.Spacing.xl)
+        .padding(density.isMinimalSurface ? Tokens.Spacing.xxl : Tokens.Spacing.xl)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: density.isMinimalSurface ? 480 : 0)
         .background(Color.appBackgroundSecondary)
         .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusLarge))
         .contentShape(Rectangle())
