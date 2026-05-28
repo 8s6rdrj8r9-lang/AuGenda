@@ -839,10 +839,18 @@ private struct MomentumSurface: View {
             }
 
             // ── Active blocks / Routines ──
+            // If one block is running, the others dim to "ghost state" so
+            // the focal routine reads first. Session 1 §2.2 hyperfocus rule.
             if !activeBlocks.isEmpty {
+                let anyActive = activeBlocks.contains(where: { $0.isActive })
                 MomentumSection(title: "Routines", count: activeBlocks.count) {
                     ForEach(activeBlocks) { block in
-                        BlockSummaryCard(block: block) { onTapBlock(block) }
+                        BlockSummaryCard(
+                            block: block,
+                            isDimmed: anyActive && !block.isActive
+                        ) {
+                            onTapBlock(block)
+                        }
                     }
                 }
             }
@@ -957,6 +965,9 @@ private struct MomentumSection<Content: View>: View {
 
 private struct BlockSummaryCard: View {
     let block: Block
+    /// True when ANOTHER block is currently running. Used to push this card
+    /// to a ghost state so the focal routine reads first.
+    var isDimmed: Bool = false
     var onTap: () -> Void = {}
 
     var body: some View {
@@ -964,7 +975,7 @@ private struct BlockSummaryCard: View {
             HStack(spacing: Tokens.Spacing.md) {
                 Image(systemName: block.icon)
                     .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(Color.appAccent)
+                    .foregroundColor(block.isActive ? Color.appAccent : Color.appAccent.opacity(isDimmed ? 0.5 : 1))
                     .frame(width: 28)
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -972,14 +983,15 @@ private struct BlockSummaryCard: View {
                         .font(Tokens.Typography.h3)
                         .fontWeight(.bold)
                         .foregroundColor(Color.appTextPrimary)
-                    Text("\(block.completedTaskCount) of \(block.totalTaskCount) done")
+                    Text(block.isActive ? "Running now" : "\(block.completedTaskCount) of \(block.totalTaskCount) done")
                         .font(Tokens.Typography.caption)
-                        .foregroundColor(Color.appTextSecondary)
+                        .foregroundColor(block.isActive ? Color.appAccent : Color.appTextSecondary)
                 }
 
                 Spacer()
 
-                if block.currentStreak > 0 {
+                // Streak hidden in ghost state — less competing info
+                if block.currentStreak > 0, !isDimmed {
                     Label("\(block.currentStreak)", systemImage: "flame.fill")
                         .font(Tokens.Typography.caption)
                         .foregroundColor(Tokens.Color.warning)
@@ -991,6 +1003,7 @@ private struct BlockSummaryCard: View {
             .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusMedium))
         }
         .buttonStyle(.plain)
+        .opacity(isDimmed ? 0.45 : 1.0)
     }
 }
 
