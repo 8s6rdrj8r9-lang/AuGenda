@@ -84,6 +84,7 @@ struct HomeDashboardView: View {
     @State private var selectedBlock: Block?
     @State private var showEnergyCheck: Bool = false
     @State private var showDensityPicker: Bool = false
+    @State private var showAddAgendaItem: Bool = false
 
     // MARK: - Derived
 
@@ -252,6 +253,7 @@ struct HomeDashboardView: View {
                         onOpenTask: { selectedTask = $0 },
                         onDeferItem: deferToTomorrow(item:),
                         onDeferTask: deferToTomorrow(task:),
+                        onAddTask: { showAddAgendaItem = true },
                         onResumeRecovery: dismissRecovery,
                         onReorientRecovery: { dismissRecovery(); showEnergyCheck = true },
                         onFreshRecovery: dismissRecovery
@@ -338,6 +340,13 @@ struct HomeDashboardView: View {
                     onAuto: clearPinnedDensity
                 )
                 .presentationDetents([.medium])
+            }
+            .sheet(isPresented: $showAddAgendaItem) {
+                AddAgendaItemView(isPresented: $showAddAgendaItem)
+                    #if os(iOS)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                    #endif
             }
         }
         .onAppear {
@@ -665,6 +674,7 @@ private struct PrimaryActionZone: View {
     let onOpenTask: (AgendaTask) -> Void
     let onDeferItem: (AgendaItem) -> Void
     let onDeferTask: (AgendaTask) -> Void
+    let onAddTask: () -> Void
     let onResumeRecovery: () -> Void
     let onReorientRecovery: () -> Void
     let onFreshRecovery: () -> Void
@@ -710,7 +720,7 @@ private struct PrimaryActionZone: View {
             )
 
         case .empty:
-            EmptyPrimaryCard()
+            EmptyPrimaryCard(onAddTask: onAddTask)
         }
     }
 }
@@ -771,15 +781,35 @@ private struct ActiveBlockPrimaryCard: View {
 }
 
 private struct EmptyPrimaryCard: View {
+    var onAddTask: () -> Void = {}
+
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
-            Text("Nothing scheduled")
-                .font(Tokens.Typography.h1)
-                .foregroundColor(Color.appTextPrimary)
-            Text("You're free. Take a breath, or pick something from the backlog.")
-                .font(Tokens.Typography.body)
-                .foregroundColor(Color.appTextSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: Tokens.Spacing.lg) {
+            VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
+                Text("Nothing scheduled")
+                    .font(Tokens.Typography.h1)
+                    .foregroundColor(Color.appTextPrimary)
+                Text("You're free. Take a breath, or add something for today.")
+                    .font(Tokens.Typography.body)
+                    .foregroundColor(Color.appTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Button(action: onAddTask) {
+                HStack(spacing: Tokens.Spacing.sm) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("Add something for today")
+                        .font(Tokens.Typography.label)
+                        .fontWeight(.semibold)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: Tokens.Spacing.touchMinimum)
+                .background(Color.appAccent)
+                .foregroundColor(.black)
+                .cornerRadius(Tokens.Border.radiusLarge)
+            }
+            .buttonStyle(.plain)
         }
         .padding(Tokens.Spacing.xl)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1102,6 +1132,7 @@ private struct AgendaItemDetailSheet: View {
     let item: AgendaItem
 
     @State private var showSnoozeMenu = false
+    @State private var showEditSheet = false
 
     private var subtasks: [SubTask] {
         (item.subTasks ?? []).sorted { $0.sortOrder < $1.sortOrder }
@@ -1233,6 +1264,26 @@ private struct AgendaItemDetailSheet: View {
                             action: { showSnoozeMenu = true }
                         )
                     }
+
+                    // Edit details — quiet tertiary affordance below the
+                    // primary action row so users can change title/time/etc.
+                    // without leaving the dashboard.
+                    Button {
+                        showEditSheet = true
+                    } label: {
+                        HStack(spacing: Tokens.Spacing.xs) {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Edit details")
+                                .font(Tokens.Typography.caption)
+                                .fontWeight(.semibold)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(minHeight: Tokens.Spacing.touchMinimum)
+                        .foregroundColor(Color.appTextSecondary)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
                 .padding(.top, Tokens.Spacing.base)
             }
@@ -1244,6 +1295,13 @@ private struct AgendaItemDetailSheet: View {
             Button("15 minutes") { snooze(minutes: 15) }
             Button("30 minutes") { snooze(minutes: 30) }
             Button("Cancel", role: .cancel) {}
+        }
+        .sheet(isPresented: $showEditSheet) {
+            AddAgendaItemView(isPresented: $showEditSheet, existingItem: item)
+                #if os(iOS)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                #endif
         }
     }
 

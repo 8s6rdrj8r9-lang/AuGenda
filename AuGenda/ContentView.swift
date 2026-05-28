@@ -55,9 +55,10 @@ struct ContentView: View {
 
     @State private var selectedTab: AppTab = .today
 
-    /// Beta flag: route the .today tab to the new HomeDashboardView (Session 2/3
-    /// five-zone surface). Default off; toggled from Settings → Experiments.
-    @AppStorage("home.dashboard.useNewHome") private var useNewHomeDashboard: Bool = false
+    /// Routes the .today tab to the new HomeDashboardView (the five-zone
+    /// adaptive surface). Default ON as of Session 7. Users can switch
+    /// back to the legacy TodayView via Settings → Experiments.
+    @AppStorage("home.dashboard.useNewHome") private var useNewHomeDashboard: Bool = true
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -741,7 +742,7 @@ struct SettingsView: View {
     @State private var showAddProfile = false
 
     /// Mirrors the same key as ContentView's @AppStorage.
-    @AppStorage("home.dashboard.useNewHome") private var useNewHomeDashboard: Bool = false
+    @AppStorage("home.dashboard.useNewHome") private var useNewHomeDashboard: Bool = true
 
     var body: some View {
         NavigationStack {
@@ -750,9 +751,9 @@ struct SettingsView: View {
                 Section {
                     Toggle(isOn: $useNewHomeDashboard) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("New Home dashboard")
+                            Text("Adaptive Home dashboard")
                                 .fontWeight(.medium)
-                            Text("Five-zone adaptive surface. Beta.")
+                            Text(useNewHomeDashboard ? "On — Today tab uses the five-zone surface." : "Off — Today tab uses the legacy list.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -760,7 +761,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Experiments")
                 } footer: {
-                    Text("Reroutes the Today tab to the new HomeDashboardView. Density adapts to your energy level; pin a capacity mode via the badge on the dashboard.")
+                    Text("Density adapts to your energy level; pin a capacity mode via the badge on the dashboard. Toggle off to revert to the simpler legacy list.")
                 }
 
                 // Profiles section — each row navigates to per-profile settings
@@ -864,6 +865,10 @@ struct AddAgendaItemView: View {
     /// Pre-assign to a specific profile (used from HouseholdOverviewView)
     var preAssignedProfileID: UUID? = nil
 
+    /// Editing mode — when non-nil the form populates from this item on
+    /// appear and updates it in place on save instead of inserting a new one.
+    var existingItem: AgendaItem? = nil
+
     @State private var title = ""
     @State private var scheduledDate: Date = .now
     @State private var frictionLevel = 3
@@ -938,7 +943,7 @@ struct AddAgendaItemView: View {
                     }
                 }
             }
-            .navigationTitle("New item")
+            .navigationTitle(existingItem == nil ? "New item" : "Edit item")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -947,32 +952,60 @@ struct AddAgendaItemView: View {
                     Button("Cancel") { isPresented = false }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") { saveAndDismiss() }
+                    Button(existingItem == nil ? "Add" : "Save") { saveAndDismiss() }
                         .disabled(title.isEmpty)
                 }
             }
         }
-        .onAppear {
+        .onAppear { hydrate() }
+    }
+
+    private func hydrate() {
+        if let existing = existingItem {
+            // Populate state from existing item — edit mode
+            title = existing.title
+            scheduledDate = existing.scheduledDate
+            frictionLevel = existing.frictionLevel
+            priority = existing.priority
+            contextTag = existing.contextTag
+            assignedToProfileID = existing.assignedToProfileID ?? activeProfile?.clientID
+        } else {
+            // Fresh form — creation mode
             assignedToProfileID = preAssignedProfileID ?? activeProfile?.clientID
         }
     }
 
     private func saveAndDismiss() {
-        let item = AgendaItem(
-            title: title,
-            scheduledDate: scheduledDate,
-            priority: priority,
-            frictionLevel: frictionLevel,
-            contextTag: contextTag
-        )
-        item.assignedToProfileID = assignedToProfileID
-        // Mark the creator only when assigning to someone else
-        if assignedToProfileID != activeProfile?.clientID {
-            item.assignedByProfileID = activeProfile?.clientID
+        if let existing = existingItem {
+            // Edit in place — preserve clientID, notes, completion state, etc.
+            existing.title = title
+            existing.scheduledDate = scheduledDate
+            existing.priority = priority
+            existing.frictionLevel = frictionLevel
+            existing.contextTag = contextTag
+            existing.assignedToProfileID = assignedToProfileID
+            existing.updatedAt = .now
+            // Reschedule notifications so the new time is reflected
+            notificationManager.cancelNotifications(for: existing)
+            notificationManager.scheduleNotifications(for: existing)
+            try? modelContext.save()
+        } else {
+            let item = AgendaItem(
+                title: title,
+                scheduledDate: scheduledDate,
+                priority: priority,
+                frictionLevel: frictionLevel,
+                contextTag: contextTag
+            )
+            item.assignedToProfileID = assignedToProfileID
+            // Mark the creator only when assigning to someone else
+            if assignedToProfileID != activeProfile?.clientID {
+                item.assignedByProfileID = activeProfile?.clientID
+            }
+            modelContext.insert(item)
+            try? modelContext.save()
+            notificationManager.scheduleNotifications(for: item)
         }
-        modelContext.insert(item)
-        try? modelContext.save()
-        notificationManager.scheduleNotifications(for: item)
         isPresented = false
     }
 }
