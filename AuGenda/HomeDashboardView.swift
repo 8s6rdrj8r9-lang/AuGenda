@@ -542,7 +542,7 @@ private struct OrientationAnchor: View {
 
                 // Energy pips (tap → check-in)
                 Button(action: onTapEnergy) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: Tokens.Spacing.sm) {
                         HStack(spacing: 3) {
                             ForEach(1...4, id: \.self) { pip in
                                 Circle()
@@ -550,11 +550,13 @@ private struct OrientationAnchor: View {
                                     .frame(width: 7, height: 7)
                             }
                         }
-                        // Stale-energy dot — subtle "this might be out of date"
+                        // Stale-energy hint — clock glyph (not a pip) so it
+                        // can't be mistaken for a 5th energy level. Clearly
+                        // separated by `sm` spacing rather than abutting.
                         if energyStale {
-                            Circle()
-                                .fill(Tokens.Color.warning)
-                                .frame(width: 5, height: 5)
+                            Image(systemName: "clock.fill")
+                                .font(.system(size: 9, weight: .regular))
+                                .foregroundColor(Tokens.Color.warning)
                                 .accessibilityLabel("Energy reading is stale")
                         }
                     }
@@ -1085,138 +1087,150 @@ private struct AgendaItemDetailSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: Tokens.Spacing.lg) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Tokens.Spacing.lg) {
 
-                    // ── Title + time ──
-                    VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
-                        Text(item.title.isEmpty ? "Untitled" : item.title)
-                            .font(Tokens.Typography.h1)
-                            .foregroundColor(Color.appTextPrimary)
-                            .fixedSize(horizontal: false, vertical: true)
+                // ── Top close button (top-trailing, replaces NavigationStack chrome) ──
+                HStack {
+                    Spacer()
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 22))
+                            .foregroundColor(Color.appTextSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close")
+                }
 
-                        if !item.isAllDay {
-                            Label(
-                                item.scheduledDate.formatted(.dateTime.weekday(.abbreviated).hour().minute()),
-                                systemImage: "clock"
-                            )
+                // ── Title + time ──
+                VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
+                    Text(item.title.isEmpty ? "Untitled" : item.title)
+                        .font(Tokens.Typography.h1)
+                        .foregroundColor(Color.appTextPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if !item.isAllDay {
+                        Label(detailTimeLabel, systemImage: "clock")
                             .font(Tokens.Typography.body)
                             .foregroundColor(Color.appTextSecondary)
-                        }
                     }
+                }
 
-                    // ── Metadata row ──
-                    HStack(spacing: Tokens.Spacing.md) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Friction")
-                                .font(Tokens.Typography.caption)
-                                .foregroundColor(Color.appTextSecondary)
-                            FrictionDots(level: item.frictionLevel)
-                        }
-                        Spacer().frame(width: Tokens.Spacing.md)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Energy")
-                                .font(Tokens.Typography.caption)
-                                .foregroundColor(Color.appTextSecondary)
-                            EnergyDots(level: item.energyRequired)
-                        }
-                        Spacer()
-                        if !item.contextTag.isEmpty {
-                            Text(item.contextTag)
-                                .font(Tokens.Typography.caption)
-                                .padding(.horizontal, Tokens.Spacing.sm)
-                                .padding(.vertical, 4)
-                                .background(Color.appBackgroundSecondary)
-                                .clipShape(Capsule())
-                                .foregroundColor(Color.appTextSecondary)
-                        }
+                // ── Metadata row ──
+                HStack(spacing: Tokens.Spacing.md) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Friction")
+                            .font(Tokens.Typography.caption)
+                            .foregroundColor(Color.appTextSecondary)
+                        FrictionDots(level: item.frictionLevel)
                     }
+                    Spacer().frame(width: Tokens.Spacing.md)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Energy")
+                            .font(Tokens.Typography.caption)
+                            .foregroundColor(Color.appTextSecondary)
+                        EnergyDots(level: item.energyRequired)
+                    }
+                    Spacer()
+                    if !item.contextTag.isEmpty {
+                        Text(item.contextTag)
+                            .font(Tokens.Typography.caption)
+                            .padding(.horizontal, Tokens.Spacing.sm)
+                            .padding(.vertical, 4)
+                            .background(Color.appBackgroundSecondary)
+                            .clipShape(Capsule())
+                            .foregroundColor(Color.appTextSecondary)
+                    }
+                }
 
-                    // ── Flags ──
-                    if item.needsBodyDouble {
-                        Label("Body double helps", systemImage: "person.wave.2.fill")
+                // ── Flags ──
+                if item.needsBodyDouble {
+                    Label("Body double helps", systemImage: "person.wave.2.fill")
+                        .font(Tokens.Typography.label)
+                        .foregroundColor(Tokens.Color.info)
+                }
+
+                // ── Notes ──
+                if !item.notes.isEmpty {
+                    VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+                        Text("Notes")
                             .font(Tokens.Typography.label)
-                            .foregroundColor(Tokens.Color.info)
+                            .foregroundColor(Color.appTextSecondary)
+                        Text(item.notes)
+                            .font(Tokens.Typography.body)
+                            .foregroundColor(Color.appTextPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                    .padding(Tokens.Spacing.base)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.appBackgroundSecondary)
+                    .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusMedium))
+                }
 
-                    // ── Notes ──
-                    if !item.notes.isEmpty {
-                        VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
-                            Text("Notes")
-                                .font(Tokens.Typography.label)
-                                .foregroundColor(Color.appTextSecondary)
-                            Text(item.notes)
-                                .font(Tokens.Typography.body)
-                                .foregroundColor(Color.appTextPrimary)
-                                .fixedSize(horizontal: false, vertical: true)
+                // ── Subtasks ──
+                if !subtasks.isEmpty {
+                    VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
+                        Text("Subtasks")
+                            .font(Tokens.Typography.label)
+                            .foregroundColor(Color.appTextSecondary)
+                        ForEach(subtasks) { sub in
+                            SubtaskRow(subtask: sub)
                         }
-                        .padding(Tokens.Spacing.base)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.appBackgroundSecondary)
-                        .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusMedium))
                     }
+                    .padding(Tokens.Spacing.base)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.appBackgroundSecondary)
+                    .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusMedium))
+                }
 
-                    // ── Subtasks ──
-                    if !subtasks.isEmpty {
-                        VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
-                            Text("Subtasks")
-                                .font(Tokens.Typography.label)
-                                .foregroundColor(Color.appTextSecondary)
-                            ForEach(subtasks) { sub in
-                                SubtaskRow(subtask: sub)
-                            }
-                        }
-                        .padding(Tokens.Spacing.base)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.appBackgroundSecondary)
-                        .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusMedium))
-                    }
+                // ── Primary actions ──
+                VStack(spacing: Tokens.Spacing.sm) {
+                    actionButton(
+                        title: "Start \(sessionMinutes)-min focus session",
+                        icon: "timer",
+                        primary: true,
+                        action: startFocusSession
+                    )
 
-                    // ── Primary actions ──
-                    VStack(spacing: Tokens.Spacing.sm) {
+                    HStack(spacing: Tokens.Spacing.sm) {
                         actionButton(
-                            title: "Start \(sessionMinutes)-min focus session",
-                            icon: "timer",
-                            primary: true,
-                            action: startFocusSession
+                            title: "Complete",
+                            icon: "checkmark.circle",
+                            primary: false,
+                            action: completeItem
                         )
-
-                        HStack(spacing: Tokens.Spacing.sm) {
-                            actionButton(
-                                title: "Complete",
-                                icon: "checkmark.circle",
-                                primary: false,
-                                action: completeItem
-                            )
-                            actionButton(
-                                title: "Snooze",
-                                icon: "zzz",
-                                primary: false,
-                                action: { showSnoozeMenu = true }
-                            )
-                        }
+                        actionButton(
+                            title: "Snooze",
+                            icon: "zzz",
+                            primary: false,
+                            action: { showSnoozeMenu = true }
+                        )
                     }
-                    .padding(.top, Tokens.Spacing.base)
                 }
-                .padding(Tokens.Spacing.xl)
+                .padding(.top, Tokens.Spacing.base)
             }
-            .background(Color.appBackground)
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
-                }
-            }
-            .confirmationDialog("Snooze for…", isPresented: $showSnoozeMenu) {
-                Button("5 minutes")  { snooze(minutes: 5) }
-                Button("15 minutes") { snooze(minutes: 15) }
-                Button("30 minutes") { snooze(minutes: 30) }
-                Button("Cancel", role: .cancel) {}
-            }
+            .padding(Tokens.Spacing.xl)
         }
+        .background(Color.appBackground)
+        .confirmationDialog("Snooze for…", isPresented: $showSnoozeMenu) {
+            Button("5 minutes")  { snooze(minutes: 5) }
+            Button("15 minutes") { snooze(minutes: 15) }
+            Button("30 minutes") { snooze(minutes: 30) }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    /// Relative-time label for the detail header. "Today, 8:06 PM" / "Tomorrow,
+    /// 8:06 PM" / "Tue 8:06 PM" depending on how close the scheduled date is.
+    private var detailTimeLabel: String {
+        let d = item.scheduledDate
+        let cal = Calendar.current
+        let timeOnly: Date.FormatStyle = .dateTime.hour().minute()
+        if cal.isDateInToday(d)    { return "Today, "    + d.formatted(timeOnly) }
+        if cal.isDateInTomorrow(d) { return "Tomorrow, " + d.formatted(timeOnly) }
+        return d.formatted(.dateTime.weekday(.abbreviated).hour().minute())
     }
 
     @ViewBuilder
@@ -1230,6 +1244,7 @@ private struct AgendaItemDetailSheet: View {
             HStack(spacing: Tokens.Spacing.sm) {
                 Image(systemName: icon)
                     .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 16, alignment: .center)   // equal slot — labels align across buttons
                 Text(title)
                     .font(Tokens.Typography.label)
                     .fontWeight(.semibold)

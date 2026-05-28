@@ -813,6 +813,7 @@ struct SettingsView: View {
                     Text("Each profile has its own neurotype settings, font, and preferences. Swipe left to delete.")
                 }
             }
+            .formStyle(.grouped)
             .navigationTitle("Settings")
             .sheet(isPresented: $showAddProfile) {
                 ProfileSetupView(isPresented: $showAddProfile)
