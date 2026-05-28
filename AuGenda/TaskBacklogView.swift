@@ -478,7 +478,35 @@ struct AddTaskView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            VStack(spacing: 0) {
+
+                // ── Sticky top action bar ─────────────────────────
+                // Guarantees Cancel + Add are reachable even when the form
+                // is taller than the window (the macOS .toolbar bottom-strip
+                // can scroll off and trap the user).
+                HStack(spacing: Tokens.Spacing.base) {
+                    Button("Cancel") { isPresented = false }
+                        .buttonStyle(.bordered)
+                        .keyboardShortcut(.cancelAction)
+
+                    Spacer()
+
+                    Text("New Task")
+                        .font(Tokens.Typography.h3)
+                        .foregroundColor(Color.appTextPrimary)
+
+                    Spacer()
+
+                    Button("Add") { save() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .keyboardShortcut(.defaultAction)
+                }
+                .padding(.horizontal, Tokens.Spacing.base)
+                .padding(.vertical, Tokens.Spacing.sm)
+                .background(Color.appBackgroundSecondary)
+
+                Form {
 
                 // ── Title ──
                 Section {
@@ -659,21 +687,12 @@ struct AddTaskView: View {
                     TextField("Any extra context…", text: $notes, axis: .vertical)
                         .lineLimit(3...8)
                 }
-            }
-            .navigationTitle("New Task")
+                }   // closes Form
+                .formStyle(.grouped)   // macOS-native label/control layout
+            }   // closes outer VStack
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { isPresented = false }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") { save() }
-                        .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
-                        .fontWeight(.semibold)
-                }
-            }
             .onAppear { assignedToProfileID = activeProfile?.clientID }
         }
     }
