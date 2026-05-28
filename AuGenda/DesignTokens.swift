@@ -336,6 +336,17 @@ enum DensityMode: String, CaseIterable, Sendable {
         }
     }
 
+    /// One-line description of what each mode actually shows. Used by the
+    /// density picker so the choice is self-explanatory.
+    var description: String {
+        switch self {
+        case .survival:   return "Just one thing. Everything else hidden."
+        case .low:        return "Energy-matched picks. Minimal metadata."
+        case .functional: return "Full day view. Standard density."
+        case .high:       return "Everything — backlog, tomorrow, completed."
+        }
+    }
+
     /// Non-essential metadata (dots, flags, context) is hidden below this threshold.
     var showsFullMetadata: Bool {
         self == .functional || self == .high

@@ -1035,17 +1035,29 @@ private struct DensityPickerSheet: View {
                         onPick(mode)
                         dismiss()
                     } label: {
-                        HStack(spacing: Tokens.Spacing.md) {
+                        HStack(alignment: .top, spacing: Tokens.Spacing.md) {
                             Image(systemName: current == mode ? "circle.inset.filled" : "circle")
                                 .foregroundColor(current == mode ? Color.appAccent : Color.appBorder)
-                            Text(mode.label)
-                                .font(Tokens.Typography.label)
-                                .foregroundColor(Color.appTextPrimary)
-                            Spacer()
+                                .padding(.top, 2)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(mode.label)
+                                    .font(Tokens.Typography.label)
+                                    .foregroundColor(Color.appTextPrimary)
+                                Text(mode.description)
+                                    .font(Tokens.Typography.caption)
+                                    .foregroundColor(Color.appTextSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 0)
                         }
                         .padding(Tokens.Spacing.base)
                         .frame(minHeight: Tokens.Spacing.touchMinimum)
-                        .background(Color.appBackgroundSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            current == mode
+                                ? Color.appAccent.opacity(0.08)
+                                : Color.appBackgroundSecondary
+                        )
                         .cornerRadius(Tokens.Border.radiusMedium)
                     }
                     .buttonStyle(.plain)
