@@ -16,8 +16,11 @@
 
 import Combine
 import Foundation
+import os.log
 import UserNotifications
 import SwiftData
+
+private let logger = Logger(subsystem: "com.augenda.AuGenda", category: "NotificationManager")
 
 // MARK: - Notification Category & Action IDs
 
@@ -79,13 +82,16 @@ final class NotificationManager: NSObject, ObservableObject {
 
     func requestAuthorization() async {
         do {
+            // Standard alert/sound/badge only. `.criticalAlert` requires a
+            // separate Apple entitlement and bypasses Do Not Disturb — overreach
+            // for a routine productivity app and a guaranteed App Review block.
             let granted = try await center.requestAuthorization(
-                options: [.alert, .sound, .badge, .criticalAlert]
+                options: [.alert, .sound, .badge]
             )
             await refreshAuthorizationStatus()
-            print("Notification authorization granted: \(granted)")
+            logger.info("Notification authorization granted: \(granted, privacy: .public)")
         } catch {
-            print("Notification authorization error: \(error)")
+            logger.error("Notification authorization error: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -177,6 +183,12 @@ final class NotificationManager: NSObject, ObservableObject {
     // MARK: - Profile preferences convenience
 
     /// Active profile's notification preferences (nil-safe; falls back to standard behaviour).
+    /// Whether to redact task content (titles, notes) from notification
+    /// previews. Defaults to true so privacy is the safe default.
+    private var strictPrivacy: Bool {
+        activePrefs?.notificationPrivacyStrict ?? true
+    }
+
     private var activePrefs: ProfilePreferences? {
         ActiveProfileManager.shared.activePreferences
     }
@@ -204,7 +216,7 @@ final class NotificationManager: NSObject, ObservableObject {
                 scheduleAlert(
                     id: "\(idBase)-advance",
                     title: "Coming up in \(advanceMinutes) min",
-                    body: item.title,
+                    body: strictPrivacy ? "Tap to open" : item.title,
                     date: advanceDate,
                     category: NotificationCategory.agendaItem,
                     userInfo: [
@@ -219,8 +231,10 @@ final class NotificationManager: NSObject, ObservableObject {
         if scheduledDate > now {
             scheduleAlert(
                 id: "\(idBase)-attime",
-                title: "Now: \(item.title)",
-                body: item.notes.isEmpty ? "Tap to open" : item.notes,
+                title: strictPrivacy ? "Time for your task" : "Now: \(item.title)",
+                body: strictPrivacy
+                    ? "Tap to open"
+                    : (item.notes.isEmpty ? "Tap to open" : item.notes),
                 date: scheduledDate,
                 category: NotificationCategory.agendaItem,
                 userInfo: [
@@ -236,7 +250,7 @@ final class NotificationManager: NSObject, ObservableObject {
             if overdueDate > now {
                 scheduleAlert(
                     id: "\(idBase)-overdue",
-                    title: "Still pending: \(item.title)",
+                    title: strictPrivacy ? "Still pending" : "Still pending: \(item.title)",
                     body: "Started 15 minutes ago — still need to do this?",
                     date: overdueDate,
                     category: NotificationCategory.agendaItem,
@@ -267,7 +281,7 @@ final class NotificationManager: NSObject, ObservableObject {
 
         scheduleAlert(
             id: "\(item.clientID.uuidString)-snooze",
-            title: "Snoozed: \(item.title)",
+            title: strictPrivacy ? "Snooze reminder" : "Snoozed: \(item.title)",
             body: "You asked to be reminded now.",
             date: snoozeDate,
             category: NotificationCategory.agendaItem,
@@ -291,9 +305,12 @@ final class NotificationManager: NSObject, ObservableObject {
         #endif
 
         // End-of-session notification
-        let body = taskTitle.isEmpty
-            ? "Your focus session is complete. Take a break."
-            : "Focus session for '\(taskTitle)' complete. Take a break."
+        let body: String
+        if strictPrivacy || taskTitle.isEmpty {
+            body = "Your focus session is complete. Take a break."
+        } else {
+            body = "Focus session for '\(taskTitle)' complete. Take a break."
+        }
 
         scheduleAlert(
             id: "focus-session-end",
@@ -322,23 +339,31 @@ final class NotificationManager: NSObject, ObservableObject {
         // profiles get a real interrupt rather than the gentle focus-done banner.
         if activePrefs?.hyperfocusGuard == true {
             let seventyFivePercent = Date.now.addingTimeInterval(Double(durationMinutes) * 60 * 0.75)
+            let hyperfocusBody: String
+            if strictPrivacy || taskTitle.isEmpty {
+                hyperfocusBody = "You've been in this session for \(Int(Double(durationMinutes) * 0.75)) minutes. Intentional?"
+            } else {
+                hyperfocusBody = "'\(taskTitle)' — \(Int(Double(durationMinutes) * 0.75)) min in. Still intentional?"
+            }
             scheduleAlert(
                 id: "hyperfocus-guard-warning",
                 title: "⚠️ Time check",
-                body: taskTitle.isEmpty
-                    ? "You've been in this session for \(Int(Double(durationMinutes) * 0.75)) minutes. Intentional?"
-                    : "'\(taskTitle)' — \(Int(Double(durationMinutes) * 0.75)) min in. Still intentional?",
+                body: hyperfocusBody,
                 date: seventyFivePercent,
                 category: NotificationCategory.hyperfocusWarning,
                 userInfo: ["type": "hyperfocusGuard"]
             )
             // Hard-stop at session end — separate from the regular focus-done banner
+            let stopBody: String
+            if strictPrivacy || taskTitle.isEmpty {
+                stopBody = "Your \(durationMinutes)-minute session has ended. Step away."
+            } else {
+                stopBody = "'\(taskTitle)' session done. You decided \(durationMinutes) min was the limit."
+            }
             scheduleAlert(
                 id: "hyperfocus-guard-stop",
                 title: "🛑 Session over — time to stop",
-                body: taskTitle.isEmpty
-                    ? "Your \(durationMinutes)-minute session has ended. Step away."
-                    : "'\(taskTitle)' session done. You decided \(durationMinutes) min was the limit.",
+                body: stopBody,
                 date: endsAt,
                 category: NotificationCategory.hyperfocusWarning,
                 userInfo: ["type": "hyperfocusGuardStop"]
@@ -365,10 +390,13 @@ final class NotificationManager: NSObject, ObservableObject {
     /// Call when user starts a task flagged as hyperfocusRisk
     func scheduleHyperfocusWarning(taskTitle: String, afterMinutes: Int = 45) {
         let warningDate = Date.now.addingTimeInterval(Double(afterMinutes) * 60)
+        let body = strictPrivacy
+            ? "You've been on this task for \(afterMinutes) minutes. Intentional?"
+            : "You've been on '\(taskTitle)' for \(afterMinutes) minutes. Intentional?"
         scheduleAlert(
             id: "hyperfocus-warning",
             title: "⚠️ Time check",
-            body: "You've been on '\(taskTitle)' for \(afterMinutes) minutes. Intentional?",
+            body: body,
             date: warningDate,
             category: NotificationCategory.hyperfocusWarning,
             userInfo: ["type": "hyperfocus"]
@@ -384,10 +412,13 @@ final class NotificationManager: NSObject, ObservableObject {
     /// Surface this when user reports low energy — suggests lowest friction task
     func scheduleLowEFNudge(taskTitle: String, delayMinutes: Int = 30) {
         let nudgeDate = Date.now.addingTimeInterval(Double(delayMinutes) * 60)
+        let body = strictPrivacy
+            ? "There's a low-friction task ready when you are."
+            : "'\(taskTitle)' is low friction — ready when you are."
         scheduleAlert(
             id: "low-ef-nudge",
             title: "Low effort task available",
-            body: "'\(taskTitle)' is low friction — ready when you are.",
+            body: body,
             date: nudgeDate,
             category: NotificationCategory.lowEFNudge,
             userInfo: ["type": "lowEFNudge"]
@@ -422,7 +453,10 @@ final class NotificationManager: NSObject, ObservableObject {
 
         let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
         center.add(request) { error in
-            if let error { print("Notification schedule error [\(id)]: \(error)") }
+            if let error {
+                // Hash the id so log readers can't reconstruct task UUIDs.
+                logger.error("Notification schedule error [\(id, privacy: .private(mask: .hash))]: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 }

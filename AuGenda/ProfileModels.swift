@@ -314,6 +314,13 @@ final class ProfilePreferences {
     var notificationStyleRaw: String = NotificationStyle.standard.rawValue
     var maxNotificationsPerHour: Int = 3
 
+    /// When true, notification titles and bodies redact task content
+    /// ("Task" / "Tap to open") so sensitive task details never appear on
+    /// the lock screen or in the Notification Center preview. Default ON
+    /// because the typical AuGenda task title may contain medication
+    /// regimens, therapy logistics, or other private context.
+    var notificationPrivacyStrict: Bool = true
+
     // MARK: Display
     var appFontRaw: String = AppFont.system.rawValue
     var minimalMode: Bool = false
