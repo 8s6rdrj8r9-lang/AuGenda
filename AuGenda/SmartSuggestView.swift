@@ -14,18 +14,18 @@ import SwiftData
 struct SmartSuggestView: View {
 
     @EnvironmentObject private var profileManager: ActiveProfileManager
-    @Query(filter: #Predicate<Task> { !$0.isComplete && !$0.isAbandoned })
-    private var allTasks: [Task]
+    @Query(filter: #Predicate<AgendaTask> { !$0.isComplete && !$0.isAbandoned })
+    private var allTasks: [AgendaTask]
 
     @State private var skipIndex: Int = 0
-    @State private var selectedTask: Task? = nil
+    @State private var selectedTask: AgendaTask? = nil
     @State private var cardOffset: CGFloat = 0
     @State private var cardOpacity: Double = 1
 
     private var energyLevel: Int { profileManager.activePreferences?.currentEnergyLevel ?? 3 }
     private var activeProfileID: UUID? { profileManager.activeProfile?.clientID }
 
-    private var eligible: [Task] {
+    private var eligible: [AgendaTask] {
         let profileID = activeProfileID
         return allTasks
             .filter { task in
@@ -44,7 +44,7 @@ struct SmartSuggestView: View {
             .sorted { $0.ndPriorityScore > $1.ndPriorityScore }
     }
 
-    private var currentTask: Task? {
+    private var currentTask: AgendaTask? {
         guard !eligible.isEmpty else { return nil }
         return eligible[skipIndex % eligible.count]
     }
@@ -148,7 +148,7 @@ struct SmartSuggestView: View {
 // MARK: - Suggested Task Card
 
 struct SuggestedTaskCard: View {
-    let task: Task
+    let task: AgendaTask
     let onTap: () -> Void
 
     private var firstPendingStep: TaskStep? {

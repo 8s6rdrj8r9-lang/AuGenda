@@ -22,7 +22,7 @@ struct TaskDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var profileManager: ActiveProfileManager
 
-    let task: Task
+    let task: AgendaTask
 
     @State private var showJustStart = false
     @State private var showEdit = false
@@ -316,7 +316,7 @@ struct TaskStepRow: View {
 struct JustStartView: View {
 
     @Environment(\.dismiss) private var dismiss
-    let task: Task
+    let task: AgendaTask
 
     @State private var committed = false
     @State private var startedAt: Date? = nil

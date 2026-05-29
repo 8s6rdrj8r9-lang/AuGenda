@@ -175,7 +175,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
 
         // Count actionable tasks — scoped to active profile where possible
         let activeProfileID = ActiveProfileManager.shared.activeProfile?.clientID
-        let taskDescriptor = FetchDescriptor<Task>(
+        let taskDescriptor = FetchDescriptor<AgendaTask>(
             predicate: #Predicate {
                 !$0.isComplete && !$0.isAbandoned
             }

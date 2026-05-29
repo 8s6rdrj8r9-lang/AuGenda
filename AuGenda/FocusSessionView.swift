@@ -20,12 +20,12 @@ struct FocusSessionView: View {
     @EnvironmentObject private var notificationManager: NotificationManager
     @EnvironmentObject private var profileManager: ActiveProfileManager
     @Query(
-        filter: #Predicate<Task> { !$0.isComplete && !$0.isAbandoned },
-        sort: \Task.sortOrder
+        filter: #Predicate<AgendaTask> { !$0.isComplete && !$0.isAbandoned },
+        sort: \AgendaTask.sortOrder
     )
-    private var tasks: [Task]
+    private var tasks: [AgendaTask]
 
-    @State private var selectedTask: Task? = nil
+    @State private var selectedTask: AgendaTask? = nil
     @State private var showTaskPicker = false
     @State private var inBreak = false
     @State private var breakEndsAt: Date? = nil
@@ -325,16 +325,16 @@ struct BreakRing: View {
 
 struct FocusTaskPickerSheet: View {
 
-    @Binding var selectedTask: Task?
+    @Binding var selectedTask: AgendaTask?
     @Environment(\.dismiss) private var dismiss
     @Query(
-        filter: #Predicate<Task> { !$0.isComplete && !$0.isAbandoned },
-        sort: \Task.sortOrder
+        filter: #Predicate<AgendaTask> { !$0.isComplete && !$0.isAbandoned },
+        sort: \AgendaTask.sortOrder
     )
-    private var tasks: [Task]
+    private var tasks: [AgendaTask]
 
     // Sort by ndPriorityScore descending so the best match is at top
-    private var sortedTasks: [Task] {
+    private var sortedTasks: [AgendaTask] {
         tasks.filter { $0.isActionable }
             .sorted { $0.ndPriorityScore > $1.ndPriorityScore }
     }
