@@ -257,7 +257,7 @@ struct TaskBacklogView: View {
                     AgendaTaskCard(task: task, showWaitingOn: filter == .waiting) {
                         selectedTask = task
                         InterruptionContext.recordActivity(
-                            itemTitle: task.title,
+                            itemID: task.clientID,
                             contextLabel: "task detail"
                         )
                     }

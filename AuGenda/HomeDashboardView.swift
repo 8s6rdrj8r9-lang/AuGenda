@@ -377,7 +377,7 @@ struct HomeDashboardView: View {
         // (3) Recovery prompt
         if shouldShowRecovery {
             return .recovery(
-                lastItem: InterruptionContext.lastItemTitle,
+                lastItem: InterruptionContext.lastItemTitle(in: modelContext),
                 gap: InterruptionContext.gapDescription,
                 contextLabel: InterruptionContext.lastContextLabel
             )
@@ -1345,7 +1345,7 @@ private struct AgendaItemDetailSheet: View {
 
     private func startFocusSession() {
         notificationManager.startFocusSession(durationMinutes: sessionMinutes, taskTitle: item.title)
-        InterruptionContext.recordActivity(itemTitle: item.title, contextLabel: "focus session")
+        InterruptionContext.recordActivity(itemID: item.clientID, contextLabel: "focus session")
         dismiss()
     }
 

@@ -744,6 +744,21 @@ struct SettingsView: View {
     /// Mirrors the same key as ContentView's @AppStorage.
     @AppStorage("home.dashboard.useNewHome") private var useNewHomeDashboard: Bool = true
 
+    @State private var showEraseConfirm = false
+
+    /// Toggle binding for notificationPrivacyStrict — lives on the active
+    /// profile's preferences, so the value is per-user and syncs via CloudKit.
+    private var privateNotificationsBinding: Binding<Bool> {
+        Binding(
+            get: { profileManager.activePreferences?.notificationPrivacyStrict ?? true },
+            set: { newValue in
+                profileManager.activePreferences?.notificationPrivacyStrict = newValue
+                profileManager.activePreferences?.updatedAt = .now
+                try? modelContext.save()
+            }
+        )
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -762,6 +777,29 @@ struct SettingsView: View {
                     Text("Experiments")
                 } footer: {
                     Text("Density adapts to your energy level; pin a capacity mode via the badge on the dashboard. Toggle off to revert to the simpler legacy list.")
+                }
+
+                // ── Privacy ──
+                Section {
+                    Toggle(isOn: privateNotificationsBinding) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Private notification previews")
+                                .fontWeight(.medium)
+                            Text("Replace task titles and notes on the lock screen with generic copy.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Button(role: .destructive) {
+                        showEraseConfirm = true
+                    } label: {
+                        Label("Erase all data on this device", systemImage: "trash")
+                    }
+                } header: {
+                    Text("Privacy")
+                } footer: {
+                    Text("Task content is stored privately in your iCloud account. Notifications fire on this device only and can be redacted for lock-screen safety. Erasing removes local data; if you also want iCloud copies gone, go to Settings → iCloud → Manage Storage → AuGenda.")
                 }
 
                 // Profiles section — each row navigates to per-profile settings
@@ -816,6 +854,16 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
             .navigationTitle("Settings")
+            .confirmationDialog(
+                "Erase all data?",
+                isPresented: $showEraseConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Erase everything", role: .destructive) { eraseAllData() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This permanently deletes every task, block, profile, and preference on this device. iCloud copies sync back unless you also remove the AuGenda iCloud container in System Settings. This cannot be undone.")
+            }
             .sheet(isPresented: $showAddProfile) {
                 ProfileSetupView(isPresented: $showAddProfile)
                     .presentationDetents([.large])
@@ -824,6 +872,51 @@ struct SettingsView: View {
             #endif
             }
         }
+    }
+
+    // MARK: - Erase
+
+    /// Wipes every SwiftData entity on this device + every UserDefaults key
+    /// the app reads or writes, then re-seeds a fresh default profile so the
+    /// app boots cleanly. iCloud copies are NOT touched (CloudKit deletion
+    /// requires a per-record loop the user would have to confirm; for now
+    /// the footer copy instructs them to use System Settings).
+    private func eraseAllData() {
+        // 1. Delete SwiftData entities. @Relationship cascade rules take care
+        //    of children, but we list parents explicitly for clarity.
+        try? modelContext.delete(model: AgendaItem.self)
+        try? modelContext.delete(model: AgendaTask.self)
+        try? modelContext.delete(model: SubTask.self)
+        try? modelContext.delete(model: TaskStep.self)
+        try? modelContext.delete(model: Block.self)
+        try? modelContext.delete(model: BlockTask.self)
+        try? modelContext.delete(model: BundleTemplate.self)
+        try? modelContext.delete(model: BundleTemplateItem.self)
+        try? modelContext.delete(model: AttachedBundle.self)
+        try? modelContext.delete(model: AttachedBundleItem.self)
+        try? modelContext.delete(model: ProfilePreferences.self)
+        try? modelContext.delete(model: Profile.self)
+        try? modelContext.delete(model: UserPreferences.self)
+        try? modelContext.save()
+
+        // 2. Clear every UserDefaults key we use.
+        let defaults = UserDefaults.standard
+        for key in [
+            "activity.snoozes", "activity.completions",
+            "energy.lastCheckIn",
+            "irp.lastItemID", "irp.lastItemTitle",
+            "irp.lastActiveDate", "irp.lastContextLabel",
+            "density.advisor.dismissedUntilTS",
+            "home.dashboard.useNewHome",
+            "home.dashboard.density.pinned",
+            "activeProfileID"
+        ] {
+            defaults.removeObject(forKey: key)
+        }
+
+        // 3. Reset the in-memory active-profile pointer and re-seed defaults.
+        profileManager.activeProfile = nil
+        profileManager.seedDefaultsIfNeeded()
     }
 
     // MARK: - Delete

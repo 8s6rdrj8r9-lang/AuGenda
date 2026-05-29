@@ -4,7 +4,11 @@
 import Foundation
 import SwiftData
 
-private let cloudKitContainerID = "iCloud.com.yourname.audhd-agenda"
+/// CloudKit container identifier. The value here MUST match the entry in
+/// `AuGenda.entitlements` AND a container the Apple Developer Portal team
+/// owns. For App Store ship, change the reverse-DNS prefix to your team's
+/// actual bundle ID — typically `iCloud.<your-team>.AuGenda`.
+private let cloudKitContainerID = "iCloud.com.augenda.AuGenda"
 
 enum AppContainer {
 

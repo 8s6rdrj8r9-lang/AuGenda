@@ -12,10 +12,13 @@
 
 import Combine
 import Foundation
+import os.log
 import SwiftData
 #if canImport(WatchConnectivity)
 import WatchConnectivity
 #endif
+
+private let logger = Logger(subsystem: "com.augenda.AuGenda", category: "WatchConnectivity")
 
 #if canImport(WatchConnectivity)
 
@@ -105,7 +108,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         if WCSession.default.isReachable {
             // Watch is awake — send immediately
             WCSession.default.sendMessage(message, replyHandler: nil) { error in
-                print("WC sendMessage error: \(error)")
+                logger.error("WC sendMessage error: \(error.localizedDescription, privacy: .public)")
             }
         } else {
             // Watch not reachable — queue via application context (delivered on next wake)
@@ -138,7 +141,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         guard WCSession.default.activationState == .activated else { return }
         if WCSession.default.isReachable {
             WCSession.default.sendMessage(message, replyHandler: nil, errorHandler: { error in
-                print("WC send error: \(error)")
+                logger.error("WC send error: \(error.localizedDescription, privacy: .public)")
             })
         } else {
             try? WCSession.default.updateApplicationContext(message)

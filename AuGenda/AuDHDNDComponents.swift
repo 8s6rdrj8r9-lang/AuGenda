@@ -99,16 +99,24 @@ enum InterruptionContext {
     // MARK: Keys
 
     private enum Key {
-        static let lastItemTitle = "irp.lastItemTitle"
+        static let lastItemID = "irp.lastItemID"             // UUID string only
         static let lastActiveDate = "irp.lastActiveDate"
         static let lastContextLabel = "irp.lastContextLabel"
+        // Legacy: used to hold a plaintext task title. Cleared aggressively.
+        static let legacyLastItemTitle = "irp.lastItemTitle"
     }
 
     // MARK: Getters / setters
 
-    static var lastItemTitle: String? {
-        get { defaults.string(forKey: Key.lastItemTitle) }
-        set { defaults.set(newValue, forKey: Key.lastItemTitle) }
+    /// Stable identifier of the last item the user was looking at. We store
+    /// the UUID rather than the title so notification-style task names
+    /// ("Take [SSRI] before food") never end up in plaintext UserDefaults.
+    static var lastItemID: UUID? {
+        get {
+            guard let s = defaults.string(forKey: Key.lastItemID) else { return nil }
+            return UUID(uuidString: s)
+        }
+        set { defaults.set(newValue?.uuidString, forKey: Key.lastItemID) }
     }
 
     static var lastActiveDate: Date? {
@@ -126,18 +134,40 @@ enum InterruptionContext {
         set { defaults.set(newValue, forKey: Key.lastContextLabel) }
     }
 
+    // MARK: Resolver
+
+    /// Resolves the last item's display title via SwiftData, looking up the
+    /// stored UUID against both AgendaItem and AgendaTask. Returns nil if the
+    /// item has been deleted or no item was recorded.
+    static func lastItemTitle(in context: ModelContext?) -> String? {
+        guard let context, let id = lastItemID else { return nil }
+        let itemDescriptor = FetchDescriptor<AgendaItem>(predicate: #Predicate { $0.clientID == id })
+        if let item = (try? context.fetch(itemDescriptor))?.first {
+            return item.title
+        }
+        let taskDescriptor = FetchDescriptor<AgendaTask>(predicate: #Predicate { $0.clientID == id })
+        if let task = (try? context.fetch(taskDescriptor))?.first {
+            return task.title
+        }
+        return nil
+    }
+
     // MARK: Helpers
 
     /// Call on any meaningful user action (tapping a task, navigating, etc.)
-    static func recordActivity(itemTitle: String? = nil, contextLabel: String = "browsing tasks") {
+    static func recordActivity(itemID: UUID? = nil, contextLabel: String = "browsing tasks") {
+        // Cleanup of the legacy plaintext-title key on every record so old
+        // installs don't carry it forever.
+        defaults.removeObject(forKey: Key.legacyLastItemTitle)
         lastActiveDate = .now
-        if let title = itemTitle { lastItemTitle = title }
+        if let id = itemID { lastItemID = id }
         lastContextLabel = contextLabel
     }
 
     /// Wipes all stored context after the user acts on the recovery prompt.
     static func clear() {
-        defaults.removeObject(forKey: Key.lastItemTitle)
+        defaults.removeObject(forKey: Key.lastItemID)
+        defaults.removeObject(forKey: Key.legacyLastItemTitle)
         defaults.set(0, forKey: Key.lastActiveDate)
         defaults.removeObject(forKey: Key.lastContextLabel)
     }
@@ -178,13 +208,14 @@ enum InterruptionContext {
 /// }
 /// ```
 struct InterruptionRecoveryPrompt: View {
+    @Environment(\.modelContext) private var modelContext
     @Binding var isShowing: Bool
     var onResume: () -> Void
     var onFresh: () -> Void
     var onReorient: () -> Void
 
     private var gap: String { InterruptionContext.gapDescription }
-    private var lastItem: String? { InterruptionContext.lastItemTitle }
+    private var lastItem: String? { InterruptionContext.lastItemTitle(in: modelContext) }
 
     var body: some View {
         if isShowing {
@@ -432,7 +463,7 @@ struct TaskCard: View {
                 if isExpanded {
                     // Record the context when user expands a task
                     InterruptionContext.recordActivity(
-                        itemTitle: item.title,
+                        itemID: item.clientID,
                         contextLabel: "reviewing task"
                     )
                 }

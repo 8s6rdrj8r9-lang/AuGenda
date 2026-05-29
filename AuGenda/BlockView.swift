@@ -12,6 +12,9 @@ import SwiftUI
 import SwiftData
 import CoreLocation
 import WeatherKit
+import os.log
+
+private let logger = Logger(subsystem: "com.augenda.AuGenda", category: "BlockManager")
 
 // MARK: - BlockManager
 
@@ -183,7 +186,7 @@ final class BlockManager: NSObject, ObservableObject, CLLocationManagerDelegate 
             } catch {
                 await MainActor.run {
                     self.isLoadingWeather = false
-                    print("Weather fetch error: \(error)")
+                    logger.error("Weather fetch error: \(error.localizedDescription, privacy: .public)")
                 }
             }
         }
@@ -408,7 +411,7 @@ final class BlockManager: NSObject, ObservableObject, CLLocationManagerDelegate 
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         Swift.Task { @MainActor in
             self.isLoadingWeather = false
-            print("Location error: \(error)")
+            logger.error("Location error: \(error.localizedDescription, privacy: .public)")
         }
     }
 
