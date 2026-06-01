@@ -42,6 +42,7 @@ struct TaskBacklogView: View {
     @State private var sortMode: BacklogSortMode = .ndPriority
     @State private var energyLevel: Int = 3
     @State private var showAddTask = false
+    @State private var showBrainDump = false
     @State private var selectedTask: AgendaTask? = nil
 
     private var activeProfileID: UUID? { profileManager.activeProfile?.clientID }
@@ -129,6 +130,27 @@ struct TaskBacklogView: View {
             .navigationBarTitleDisplayMode(.large)
             #endif
             .toolbar {
+                // Brain dump — fast batch add for the racing-thoughts moment.
+                // Sits LEFT of the detailed-add button so it reads first; this
+                // is the lower-friction path and should be the easier reach.
+                ToolbarItem(placement: {
+                    #if os(iOS)
+                    return .navigationBarTrailing
+                    #else
+                    return .primaryAction
+                    #endif
+                }()) {
+                    Button {
+                        showBrainDump = true
+                    } label: {
+                        Image(systemName: "brain.head.profile")
+                            .font(.title2)
+                            .foregroundStyle(Tokens.Color.primary)
+                    }
+                    .accessibilityLabel("Brain dump — add many tasks at once")
+                }
+
+                // Detailed single-task add.
                 ToolbarItem(placement: {
                     #if os(iOS)
                     return .navigationBarTrailing
@@ -143,10 +165,18 @@ struct TaskBacklogView: View {
                             .font(.title2)
                             .foregroundStyle(Tokens.Color.primary)
                     }
+                    .accessibilityLabel("Add a single task with full detail")
                 }
             }
             .sheet(isPresented: $showAddTask) {
                 AddTaskView(isPresented: $showAddTask)
+                #if os(iOS)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                #endif
+            }
+            .sheet(isPresented: $showBrainDump) {
+                BrainDumpView(isPresented: $showBrainDump)
                 #if os(iOS)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
@@ -717,6 +747,133 @@ struct AddTaskView: View {
             task.assignedByProfileID = activeProfile?.clientID
         }
         modelContext.insert(task)
+        try? modelContext.save()
+        isPresented = false
+    }
+}
+
+
+// MARK: - Brain Dump View
+//
+// Batch task entry for the racing-thoughts moment. One thought per line,
+// no friction/energy/context prompts — every line becomes an AgendaTask
+// with sensible defaults. The user can refine each task later via the
+// existing edit flow. Designed for ND users in a low-EF state: zero
+// required decisions, large text surface, reassuring microcopy.
+
+struct BrainDumpView: View {
+
+    @Binding var isPresented: Bool
+    @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var profileManager: ActiveProfileManager
+
+    @State private var text: String = ""
+    @FocusState private var editorFocused: Bool
+
+    /// Non-empty, trimmed lines — each becomes one task.
+    private var lines: [String] {
+        text
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    private var countLabel: String {
+        switch lines.count {
+        case 0:  return "No thoughts yet"
+        case 1:  return "1 thought"
+        default: return "\(lines.count) thoughts"
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+
+                // ── Sticky top action bar ────────────────────────
+                // Same pattern as AddTaskView's sticky bar so Cancel + Add
+                // are always reachable even when the keyboard takes the
+                // bottom of the screen.
+                HStack(spacing: Tokens.Spacing.base) {
+                    Button("Cancel") { isPresented = false }
+                        .buttonStyle(.bordered)
+                        .keyboardShortcut(.cancelAction)
+
+                    Spacer()
+
+                    VStack(spacing: 0) {
+                        Text("Brain dump")
+                            .font(Tokens.Typography.h3)
+                            .foregroundColor(Color.appTextPrimary)
+                        Text(countLabel)
+                            .font(Tokens.Typography.caption)
+                            .foregroundColor(Color.appTextSecondary)
+                    }
+
+                    Spacer()
+
+                    Button("Add all") { saveAll() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(lines.isEmpty)
+                        .keyboardShortcut(.defaultAction)
+                }
+                .padding(.horizontal, Tokens.Spacing.base)
+                .padding(.vertical, Tokens.Spacing.sm)
+                .background(Color.appBackgroundSecondary)
+
+                // ── Reassurance copy ─────────────────────────────
+                // ND-friendly framing: explicit permission to skip the
+                // detail. Keeps the executive load to "type, save."
+                Text("One thought per line. Skip the detail — friction, energy, time, context all get sensible defaults. Refine later, or never.")
+                    .font(Tokens.Typography.caption)
+                    .foregroundColor(Color.appTextSecondary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, Tokens.Spacing.base)
+                    .padding(.top, Tokens.Spacing.sm)
+                    .padding(.bottom, Tokens.Spacing.xs)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                // ── Editor ───────────────────────────────────────
+                TextEditor(text: $text)
+                    .focused($editorFocused)
+                    .font(Tokens.Typography.body)
+                    .scrollContentBackground(.hidden)
+                    .padding(.horizontal, Tokens.Spacing.sm)
+                    .background(Color.appBackground)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .onAppear {
+                // Focus the editor immediately — capture before the thought
+                // evaporates is the whole point of the surface.
+                editorFocused = true
+            }
+        }
+    }
+
+    private func saveAll() {
+        let profileID = profileManager.activeProfile?.clientID
+        let allLines = lines
+        guard !allLines.isEmpty else { return }
+
+        // Insert in reverse sortOrder so the first-typed line ends up at
+        // the top of the backlog when sorted ascending — matches what the
+        // user expects ("the thing I typed first is the thing I dumped first").
+        for (offset, title) in allLines.enumerated() {
+            let task = AgendaTask(
+                title: title,
+                frictionLevel: 3,
+                energyRequired: 2,
+                estimatedMinutes: 15,
+                interestLevel: 3
+            )
+            task.assignedToProfileID = profileID
+            task.sortOrder = offset
+            modelContext.insert(task)
+        }
         try? modelContext.save()
         isPresented = false
     }
