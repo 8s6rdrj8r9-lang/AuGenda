@@ -10,6 +10,7 @@
 
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 
 // MARK: - Filter & Sort Mode
 
@@ -31,6 +32,7 @@ enum BacklogSortMode: String, CaseIterable {
 
 struct TaskBacklogView: View {
 
+    @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var profileManager: ActiveProfileManager
     @Query(
         filter: #Predicate<AgendaTask> { !$0.isComplete && !$0.isAbandoned },
@@ -44,6 +46,13 @@ struct TaskBacklogView: View {
     @State private var showAddTask = false
     @State private var showBrainDump = false
     @State private var selectedTask: AgendaTask? = nil
+
+    // Import / Export state
+    @State private var showExporter = false
+    @State private var showImporter = false
+    @State private var exportDocument = TaskTextFileDocument()
+    @State private var exportFormat: TaskExportFormat = .markdown
+    @State private var importFeedback: String? = nil
 
     private var activeProfileID: UUID? { profileManager.activeProfile?.clientID }
     private var activePrefs: ProfilePreferences? { profileManager.activePreferences }
@@ -97,6 +106,71 @@ struct TaskBacklogView: View {
             }
         case .friction:
             return items.sorted { $0.frictionLevel < $1.frictionLevel }
+        }
+    }
+
+    // MARK: - Import / Export
+
+    /// Default filename presented in the system Save dialog. Includes today's
+    /// date so the user can tell exports apart at a glance.
+    private var defaultExportFilename: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return "AuGenda-tasks-\(formatter.string(from: .now)).\(exportFormat.fileExtension)"
+    }
+
+    /// Gather every actionable AgendaTask for the active profile, serialize
+    /// in the chosen format, and trigger the system file-exporter. The actual
+    /// "Save to…" dialog is presented by `.fileExporter`.
+    private func beginExport(format: TaskExportFormat) {
+        let allForProfile = profileTasks
+            .sorted { $0.sortOrder < $1.sortOrder }
+        let payload = TaskExporter.export(allForProfile, as: format)
+
+        exportFormat = format
+        exportDocument = TaskTextFileDocument(text: payload)
+        showExporter = true
+    }
+
+    /// Read the picked file, detect format from its extension, parse, and
+    /// append-insert the resulting AgendaTasks into the model context. The
+    /// importer never deletes existing data — duplicates are accepted.
+    private func handleImportResult(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let error):
+            importFeedback = "Import failed: \(error.localizedDescription)"
+
+        case .success(let urls):
+            guard let url = urls.first else { return }
+
+            // Security-scoped access — required when the file is outside the
+            // app's sandbox (which it almost always is for user-picked files).
+            let needsScope = url.startAccessingSecurityScopedResource()
+            defer { if needsScope { url.stopAccessingSecurityScopedResource() } }
+
+            guard let format = TaskImporter.detectFormat(filename: url.lastPathComponent) else {
+                importFeedback = "Couldn't detect the file format from the extension. Supported: .json .yaml .yml .csv .md .markdown .txt"
+                return
+            }
+            guard let data = try? Data(contentsOf: url),
+                  let text = String(data: data, encoding: .utf8) else {
+                importFeedback = "Couldn't read the file."
+                return
+            }
+
+            let imported = TaskImporter.parse(text, as: format)
+            guard !imported.isEmpty else {
+                importFeedback = "No tasks found in the file."
+                return
+            }
+
+            let profileID = profileManager.activeProfile?.clientID
+            for task in imported {
+                task.assignedToProfileID = profileID
+                modelContext.insert(task)
+            }
+            try? modelContext.save()
+            importFeedback = "Imported \(imported.count) task\(imported.count == 1 ? "" : "s") from \(format.displayName)."
         }
     }
 
@@ -167,6 +241,38 @@ struct TaskBacklogView: View {
                     }
                     .accessibilityLabel("Add a single task with full detail")
                 }
+
+                // Import / Export menu — lower frequency than the two adds,
+                // so a single Menu (popover) instead of a third button.
+                ToolbarItem(placement: {
+                    #if os(iOS)
+                    return .navigationBarTrailing
+                    #else
+                    return .primaryAction
+                    #endif
+                }()) {
+                    Menu {
+                        Section("Export") {
+                            ForEach(TaskExportFormat.allCases) { format in
+                                Button(format.displayName) {
+                                    beginExport(format: format)
+                                }
+                            }
+                        }
+                        Section("Import") {
+                            Button {
+                                showImporter = true
+                            } label: {
+                                Label("From file…", systemImage: "tray.and.arrow.down")
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "tray.and.arrow.up")
+                            .font(.title2)
+                            .foregroundStyle(Tokens.Color.primary)
+                    }
+                    .accessibilityLabel("Import or export tasks")
+                }
             }
             .sheet(isPresented: $showAddTask) {
                 AddTaskView(isPresented: $showAddTask)
@@ -181,6 +287,37 @@ struct TaskBacklogView: View {
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
                 #endif
+            }
+            .fileExporter(
+                isPresented: $showExporter,
+                document: exportDocument,
+                contentType: exportFormat.contentType,
+                defaultFilename: defaultExportFilename
+            ) { result in
+                // Silent on success; surface error via the same banner the
+                // importer uses. Future v2: small confirmation toast.
+                if case .failure(let error) = result {
+                    importFeedback = "Export failed: \(error.localizedDescription)"
+                }
+            }
+            .fileImporter(
+                isPresented: $showImporter,
+                allowedContentTypes: [.json, .commaSeparatedText, .plainText, .text],
+                allowsMultipleSelection: false
+            ) { result in
+                handleImportResult(result)
+            }
+            .alert(
+                "Import",
+                isPresented: Binding(
+                    get: { importFeedback != nil },
+                    set: { if !$0 { importFeedback = nil } }
+                ),
+                presenting: importFeedback
+            ) { _ in
+                Button("OK", role: .cancel) { importFeedback = nil }
+            } message: { msg in
+                Text(msg)
             }
             .sheet(item: $selectedTask) { task in
                 TaskDetailView(task: task)
