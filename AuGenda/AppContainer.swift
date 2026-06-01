@@ -4,11 +4,26 @@
 import Foundation
 import SwiftData
 
-/// CloudKit container identifier. The value here MUST match the entry in
-/// `AuGenda.entitlements` AND a container the Apple Developer Portal team
-/// owns. For App Store ship, change the reverse-DNS prefix to your team's
-/// actual bundle ID — typically `iCloud.<your-team>.AuGenda`.
-private let cloudKitContainerID = "iCloud.com.augenda.AuGenda"
+/// CloudKit container identifier.
+///
+/// 🚨 TESTFLIGHT BLOCKER — REPLACE BEFORE FIRST UPLOAD 🚨
+///
+/// The literal below is a placeholder. To ship to TestFlight you MUST:
+///   1. In Apple Developer Portal → Identifiers → iCloud Containers, create a
+///      container named exactly `iCloud.<your-team-prefix>.AuGenda` (your team
+///      prefix is the reverse-DNS your bundle IDs already use — the existing
+///      watch target signed as `ensdev.AuGenda.watchkitapp`, so this would
+///      typically be `iCloud.ensdev.AuGenda`).
+///   2. Update this literal AND the matching entry in every entitlements file
+///      under `iCloud.com.apple.developer.icloud-container-identifiers`:
+///        - `AuGenda/AuGenda.entitlements`
+///        - watch entitlements file (once capabilities are configured)
+///        - widget entitlements file (once capabilities are configured)
+///   3. Verify in App Store Connect that the iOS app + watch app bundle IDs
+///      both have the iCloud capability turned on and that container linked.
+///
+/// Until this is real, CloudKit sync silently fails on device installs.
+private let cloudKitContainerID = "iCloud.com.augenda.AuGenda"   // ⚠️ placeholder
 
 enum AppContainer {
 

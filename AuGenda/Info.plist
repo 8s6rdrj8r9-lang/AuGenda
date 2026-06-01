@@ -2,6 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Encryption export compliance — AuGenda uses only Apple's iCloud and
+	     HTTPS, both of which fall under Apple's exempt-encryption category.
+	     Setting this to false skips the compliance prompt on every TestFlight
+	     upload. If we ever add custom crypto, switch to true and set up the
+	     export-compliance docs in App Store Connect. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>AuGenda checks the weather for your outdoor routine blocks so it can suggest what to grab — a coat, sunscreen, umbrella. Location stays on your device and is only sent to Apple's WeatherKit. AuGenda never shares your location with anyone else.</string>
 	<key>UIBackgroundModes</key>

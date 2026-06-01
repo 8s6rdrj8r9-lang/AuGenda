@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Privacy Manifest — AuGenda iOS/macOS app.
+
+	  Apple requires this file for App Store submission since spring 2024
+	  when an app uses "required reason" APIs. Declared truthfully:
+	    * NSPrivacyTracking = false — no cross-site tracking, no IDFA
+	    * NSPrivacyTrackingDomains = [] — no calls to any tracking server
+	    * NSPrivacyCollectedDataTypes = [] — all user data stays in the
+	      user's own iCloud Private Database; AuGenda the company has zero
+	      backend and cannot see user task content
+	    * NSPrivacyAccessedAPITypes — UserDefaults usage declared with
+	      reason CA92.1 (access info from same app per documentation)
+	-->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<!-- CA92.1: Access info from the same app, per documentation.
+				     AuGenda uses UserDefaults only for app-internal settings:
+				     active profile ID, interruption-recovery state, density
+				     mode pin, energy check-in timestamp, activity log for
+				     the DensityAdvisor. Never shared with other apps. -->
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

@@ -60,6 +60,10 @@ struct ContentView: View {
     /// back to the legacy TodayView via Settings → Experiments.
     @AppStorage("home.dashboard.useNewHome") private var useNewHomeDashboard: Bool = true
 
+    /// First-launch onboarding gate. Flip to false to re-show the cards.
+    @AppStorage("onboarding.completed") private var onboardingCompleted: Bool = false
+    @State private var showOnboarding: Bool = false
+
     var body: some View {
         ZStack(alignment: .top) {
             Color.appBackground
@@ -107,8 +111,24 @@ struct ContentView: View {
         }
         .environment(\.appFont, profileManager.activeFont)
         .preferredColorScheme(.dark)
+        .sheet(isPresented: $showOnboarding, onDismiss: {
+            // Persist completion only when the sheet actually closes — covers
+            // both the Get-started button and the top-trailing close X.
+            onboardingCompleted = true
+        }) {
+            OnboardingView(isPresented: $showOnboarding)
+                #if os(iOS)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.hidden)
+                #endif
+        }
         .onAppear {
             setupOnLaunch()
+            // Show onboarding once per install. Defer to next runloop so the
+            // sheet doesn't race the tab bar's initial layout pass.
+            if !onboardingCompleted {
+                DispatchQueue.main.async { showOnboarding = true }
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .agendaItemCompleted)) { note in
             handleCompleteAction(note.userInfo)
