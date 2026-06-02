@@ -699,6 +699,7 @@ struct ProfileSettingsView: View {
 
     @State private var showNeurotypeEditor = false
     @State private var showResetConfirm = false
+    @State private var showCapacitySelector = false
 
     var body: some View {
         Form {
@@ -767,6 +768,30 @@ struct ProfileSettingsView: View {
 
             // Energy & EF
             Section {
+                // Set capacity — opens the same picker that runs on first
+                // launch. Surfaces the current pin / auto-derived mode and
+                // lets the user re-commit at any moment.
+                Button {
+                    showCapacitySelector = true
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "leaf.fill")
+                            .foregroundStyle(Color.appAccent)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Set capacity")
+                                .foregroundStyle(.primary)
+                            Text(currentCapacityLabel)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .buttonStyle(.plain)
+
                 Toggle("Energy check-ins", isOn: $prefs.energyTrackingEnabled)
                     .tint(Color.appAccent)
                     .onChange(of: prefs.energyTrackingEnabled) { _, _ in save() }
@@ -886,6 +911,12 @@ struct ProfileSettingsView: View {
                 save()
             }
         }
+        .sheet(isPresented: $showCapacitySelector) {
+            CognitiveStateSelector(
+                isPresented: $showCapacitySelector,
+                isFirstLaunch: false
+            )
+        }
         .confirmationDialog(
             "Reset to neurotype defaults?",
             isPresented: $showResetConfirm,
@@ -896,6 +927,16 @@ struct ProfileSettingsView: View {
         } message: {
             Text("This will overwrite your current settings with your neurotype defaults.")
         }
+    }
+
+    /// Subtitle for the "Set capacity" row — shows what the user is at
+    /// right now: their pinned mode if set, otherwise the auto-derived one.
+    private var currentCapacityLabel: String {
+        if let pinned = prefs.densityPinned {
+            return "Pinned to \(pinned.label)"
+        }
+        let derived = DensityMode.autoFrom(energyLevel: prefs.currentEnergyLevel)
+        return "Currently \(derived.label) — auto from energy"
     }
 
     private func save() {

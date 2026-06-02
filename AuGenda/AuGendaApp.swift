@@ -66,6 +66,10 @@ struct RootView: View {
 
     @Query private var profiles: [Profile]
     @State private var showOnboarding = false
+    /// Shown immediately after ProfileSetupView completes — the first-launch
+    /// capacity check. Settings-mode invocations bypass this and route through
+    /// ProfileSettingsView → "Set capacity" instead.
+    @State private var showCognitiveSelector = false
 
     var body: some View {
         ContentView()
@@ -84,8 +88,22 @@ struct RootView: View {
             .onChange(of: profiles.isEmpty, initial: true) { _, isEmpty in
                 if isEmpty { showOnboarding = true }
             }
-            .sheet(isPresented: $showOnboarding) {
+            .sheet(isPresented: $showOnboarding, onDismiss: {
+                // Chain: profile created → ask for capacity. Guard against the
+                // user cancelling profile setup (no profile created → no
+                // selector). The selector itself can't be dismissed without a
+                // commit on first launch, so this won't loop.
+                if !profiles.isEmpty {
+                    showCognitiveSelector = true
+                }
+            }) {
                 ProfileSetupView(isPresented: $showOnboarding, isOnboarding: true)
+            }
+            .sheet(isPresented: $showCognitiveSelector) {
+                CognitiveStateSelector(
+                    isPresented: $showCognitiveSelector,
+                    isFirstLaunch: true
+                )
             }
     }
 }

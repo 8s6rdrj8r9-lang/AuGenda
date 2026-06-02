@@ -38,11 +38,12 @@ struct OnboardingView: View {
             .padding(.horizontal, Tokens.Spacing.lg)
             .padding(.top, Tokens.Spacing.base)
 
-            // Card carousel
+            // Card carousel — Capacity is its own dedicated CognitiveStateSelector
+            // sheet in the first-launch chain (and a Settings entry), so the
+            // capacity card was removed from this surface to avoid duplicate copy.
             TabView(selection: $page) {
                 welcomeCard.tag(0)
-                capacityCard.tag(1)
-                captureCard.tag(2)
+                captureCard.tag(1)
             }
             #if os(iOS)
             .tabViewStyle(.page(indexDisplayMode: .always))
@@ -58,7 +59,7 @@ struct OnboardingView: View {
                     .buttonStyle(.bordered)
                 }
                 Spacer()
-                if page < 2 {
+                if page < 1 {
                     Button("Next") {
                         withAnimation { page += 1 }
                     }
@@ -91,21 +92,7 @@ struct OnboardingView: View {
         )
     }
 
-    // MARK: - Card 2: Capacity
-
-    private var capacityCard: some View {
-        OnboardingCardLayout(
-            icon: "leaf",
-            iconTint: Tokens.Color.success,
-            title: "Tell it your capacity",
-            paragraphs: [
-                "Tap the energy pips at the top of the Today tab to set how you're feeling — Survival, Low, Functional, or High.",
-                "The dashboard adapts: in Survival you see only the one thing to do; in High you see the whole picture. You can pin a mode if your energy doesn't match what you need to see."
-            ]
-        )
-    }
-
-    // MARK: - Card 3: Capture
+    // MARK: - Card 2: Capture
 
     private var captureCard: some View {
         OnboardingCardLayout(
