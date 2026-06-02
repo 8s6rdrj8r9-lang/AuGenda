@@ -1,14 +1,40 @@
 {
-  "images" : [
+  "images": [
     {
-      "filename" : "AppIcon-1024.png",
-      "idiom" : "universal",
-      "platform" : "watchos",
-      "size" : "1024x1024"
+      "filename": "iphone_1024x1024@1x.png",
+      "idiom": "watch",
+      "role": "appLauncher",
+      "scale": "2x",
+      "size": "172x172",
+      "subtype": "42mm"
+    },
+    {
+      "filename": "iphone_1024x1024@1x.png",
+      "idiom": "watch",
+      "role": "appLauncher",
+      "scale": "2x",
+      "size": "156x156",
+      "subtype": "40mm"
+    },
+    {
+      "filename": "iphone_1024x1024@1x.png",
+      "idiom": "watch",
+      "role": "appLauncher",
+      "scale": "2x",
+      "size": "152x152",
+      "subtype": "41mm"
+    },
+    {
+      "filename": "iphone_1024x1024@1x.png",
+      "idiom": "watch",
+      "role": "appLauncher",
+      "scale": "2x",
+      "size": "144x144",
+      "subtype": "39mm"
     }
   ],
-  "info" : {
-    "author" : "xcode",
-    "version" : 1
+  "info": {
+    "author": "xcode",
+    "version": 1
   }
 }
