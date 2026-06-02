@@ -65,11 +65,25 @@ struct RootView: View {
     #endif
 
     @Query private var profiles: [Profile]
-    @State private var showOnboarding = false
-    /// Shown immediately after ProfileSetupView completes — the first-launch
-    /// capacity check. Settings-mode invocations bypass this and route through
-    /// ProfileSettingsView → "Set capacity" instead.
-    @State private var showCognitiveSelector = false
+
+    // Onboarding-completed flag also lives here so we can chain the three
+    // first-launch sheets serially. Mirrors the @AppStorage in ContentView
+    // (same key) — either site reads / writes the same UserDefault.
+    @AppStorage("onboarding.completed") private var onboardingCompleted: Bool = false
+
+    /// First-launch sequence is driven by a single Step enum routed through
+    /// one `.sheet(item:)` modifier. Two `.sheet` modifiers on the same view
+    /// race with each other AND with ContentView's own sheet attachments,
+    /// which is what was breaking the original chain. One sheet = one
+    /// guaranteed presentation at a time.
+    enum FirstLaunchStep: String, Identifiable {
+        case profileSetup
+        case capacity
+        case onboarding
+
+        var id: String { rawValue }
+    }
+    @State private var firstLaunchStep: FirstLaunchStep? = nil
 
     var body: some View {
         ContentView()
@@ -84,26 +98,94 @@ struct RootView: View {
                 watchManager.modelContext = modelContext
                 #endif
             }
-            // Show onboarding on first launch (no profiles) and if all profiles are deleted
+            // Decide what (if anything) to show on launch. Only kicks off
+            // if no step is currently active — handleStepDismiss owns mid-
+            // flow transitions, this owner just picks the entry point.
             .onChange(of: profiles.isEmpty, initial: true) { _, isEmpty in
-                if isEmpty { showOnboarding = true }
-            }
-            .sheet(isPresented: $showOnboarding, onDismiss: {
-                // Chain: profile created → ask for capacity. Guard against the
-                // user cancelling profile setup (no profile created → no
-                // selector). The selector itself can't be dismissed without a
-                // commit on first launch, so this won't loop.
-                if !profiles.isEmpty {
-                    showCognitiveSelector = true
+                guard firstLaunchStep == nil else { return }
+                if isEmpty {
+                    firstLaunchStep = .profileSetup
+                } else if !onboardingCompleted
+                       && profileManager.activePreferences?.densityPinned != nil {
+                    // Existing profile with capacity already set but onboarding
+                    // never finished — pick up at the tour. (Existing profile
+                    // WITHOUT capacity pinned skips this and lands on the
+                    // dashboard; settings has "Set capacity" for that.)
+                    firstLaunchStep = .onboarding
                 }
-            }) {
-                ProfileSetupView(isPresented: $showOnboarding, isOnboarding: true)
             }
-            .sheet(isPresented: $showCognitiveSelector) {
-                CognitiveStateSelector(
-                    isPresented: $showCognitiveSelector,
-                    isFirstLaunch: true
-                )
+            .sheet(item: $firstLaunchStep, onDismiss: handleStepDismiss) { step in
+                switch step {
+                case .profileSetup:
+                    ProfileSetupView(
+                        isPresented: dismissBinding(for: .profileSetup),
+                        isOnboarding: true
+                    )
+                case .capacity:
+                    CognitiveStateSelector(
+                        isPresented: dismissBinding(for: .capacity),
+                        isFirstLaunch: true
+                    )
+                case .onboarding:
+                    // Mark completion in the binding's set closure so
+                    // handleStepDismiss can read it correctly on the next
+                    // tick — otherwise the dismiss handler would see
+                    // !onboardingCompleted still true and re-present.
+                    OnboardingView(
+                        isPresented: dismissBinding(for: .onboarding) {
+                            onboardingCompleted = true
+                        }
+                    )
+                }
             }
+    }
+
+    /// Reusable binding for each step's `isPresented` parameter. On dismiss
+    /// (set to false), runs an optional callback BEFORE clearing the step —
+    /// useful for committing per-step completion flags (like
+    /// `onboardingCompleted = true`) before `handleStepDismiss` reads them.
+    private func dismissBinding(
+        for step: FirstLaunchStep,
+        onClose: (() -> Void)? = nil
+    ) -> Binding<Bool> {
+        Binding(
+            get: { firstLaunchStep == step },
+            set: { newValue in
+                if !newValue {
+                    onClose?()
+                    firstLaunchStep = nil
+                }
+            }
+        )
+    }
+
+    /// Sheet onDismiss handler — runs after each step closes. Each branch
+    /// guards against re-triggering by checking the side-effect that the
+    /// just-finished step would have written (profile exists, density pinned,
+    /// onboarding flag set). Without those guards, finishing a step would
+    /// loop us right back into it.
+    private func handleStepDismiss() {
+        // User bailed out of ProfileSetup → no profile, no chain. They can
+        // re-trigger via Settings → Profiles → Add profile later.
+        guard !profiles.isEmpty else { return }
+
+        // Profile exists but capacity not pinned yet → step 2.
+        if profileManager.activePreferences?.densityPinned == nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                firstLaunchStep = .capacity
+            }
+            return
+        }
+
+        // Capacity pinned but onboarding tour not finished → step 3.
+        if !onboardingCompleted {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                firstLaunchStep = .onboarding
+            }
+            return
+        }
+
+        // All three steps complete — nothing more to do. handleStepDismiss
+        // returns silently and the user lands on ContentView.
     }
 }
