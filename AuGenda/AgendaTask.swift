@@ -51,6 +51,36 @@ final class AgendaTask {
     /// Interest level (1 = tedious, 5 = genuinely interesting)
     var interestLevel: Int = 3
 
+    // MARK: - Difficulty axes (introduced for the six-axis difficulty model)
+    //
+    // All default to 0 so existing data renders correctly without migration.
+    // See memory/task_difficulty_and_ai_enrichment.md for the formula + rationale.
+
+    /// Sensory load: environmental noise / light / smell / texture / crowd
+    /// exposure (0 = none, 3 = severe). Critical for autism profiles —
+    /// rates the ENVIRONMENT the task happens in, not the task content.
+    var sensoryLoad: Int = 0
+
+    /// Social load: synchronous communication weight.
+    /// 0 = solo, 1 = async (email/text), 2 = known scheduled call, 3 = unknown
+    /// caller / negotiation / confrontation.
+    var socialLoad: Int = 0
+
+    /// Initiation cost: first-step paralysis / dread weight, independent of
+    /// execution friction. A 30-second action can have initiation=3 (the
+    /// IRS-letter problem). Weighted heavily in the difficulty formula.
+    var initiationCost: Int = 0
+
+    /// Hyperfocus override — forces inclusion in survival mode regardless of
+    /// computed difficulty rank. Lets the user opt their special-interest
+    /// tasks past the rank filter when they explicitly want to do them.
+    var specialInterest: Bool = false
+
+    /// Per-task AI enrichment opt-out. Hides the "Enrich" button on this
+    /// task and skips it from auto-enrich. Use for explicitly sensitive
+    /// items the user doesn't want sent to any cloud provider.
+    var excludeFromAI: Bool = false
+
     // MARK: - Priority & ordering
     var priority: Int = 0
     var sortOrder: Int = 0

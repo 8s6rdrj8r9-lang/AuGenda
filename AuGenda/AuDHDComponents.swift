@@ -423,6 +423,19 @@ extension Color {
         #endif
     }()
     static let appAccent = AppColor.blue500
+
+    /// Warm peach-ember reserved for the "I'm overwhelmed" path and other
+    /// inviting moments (capacity-first welcome). Distinct from `appAccent`
+    /// (cool blue, used for system/admin/info) — this carries an
+    /// open-hand emotional register. Same sRGB in light and dark; the
+    /// surrounding opacity does the modulation against the background.
+    static let warmEmber = Color(
+        .sRGB,
+        red: 0.95,
+        green: 0.65,
+        blue: 0.40,
+        opacity: 1.0
+    )
 }
 
 // MARK: - Preview

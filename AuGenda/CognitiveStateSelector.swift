@@ -26,6 +26,104 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - Check-in frequency
+
+enum CognitiveCheckInFrequency: String, CaseIterable, Identifiable {
+    case never           = "never"
+    case daily           = "daily"
+    case everyAppLaunch  = "everyAppLaunch"
+    case everyForeground = "everyForeground"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .never:           return "Never"
+        case .daily:           return "Once daily"
+        case .everyAppLaunch:  return "Every app launch"
+        case .everyForeground: return "Every time app comes to foreground"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .never:           return "Disable check-in prompts"
+        case .daily:           return "Show once per day if available"
+        case .everyAppLaunch:  return "Every time you restart the app"
+        case .everyForeground: return "Every time the app comes from background"
+        }
+    }
+}
+
+// MARK: - Tracker
+
+enum CognitiveCheckInTracker {
+    private static let lastCheckInKey = "cognitiveCheckIn.lastTimestamp"
+    private static let frequencyKey = "cognitiveCheckIn.frequency"
+    private static let dailyRollingKey = "cognitiveCheckIn.dailyRolling24h"
+
+    /// Defaults to `.never` — the user opts in during onboarding (or on a
+    /// later launch if they were overwhelmed on first launch and skipped the
+    /// onboarding tour). Nothing prompts until they explicitly choose.
+    static var frequency: CognitiveCheckInFrequency {
+        get {
+            let raw = UserDefaults.standard.string(forKey: frequencyKey) ?? "never"
+            return CognitiveCheckInFrequency(rawValue: raw) ?? .never
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: frequencyKey) }
+    }
+
+    /// Only meaningful when `frequency == .daily`.
+    /// • false (default) → "first use of the day": re-asks the first time the
+    ///   app is opened each calendar day (resets at midnight).
+    /// • true → 24-hour rolling window: re-asks only once a full 24 hours has
+    ///   elapsed since the last check-in (11pm → 11pm the next night).
+    static var dailyUsesRollingWindow: Bool {
+        get { UserDefaults.standard.bool(forKey: dailyRollingKey) }
+        set { UserDefaults.standard.set(newValue, forKey: dailyRollingKey) }
+    }
+
+    static func shouldPrompt(scenePhase: ScenePhase) -> Bool {
+        let freq = frequency
+        guard freq != .never else { return false }
+
+        let lastTime = UserDefaults.standard.double(forKey: lastCheckInKey)
+        let lastDate = lastTime > 0 ? Date(timeIntervalSince1970: lastTime) : nil
+
+        switch freq {
+        case .never:
+            return false
+        case .daily:
+            guard let last = lastDate else { return true }
+            if dailyUsesRollingWindow {
+                // Rolling window: a full 24 hours must elapse since the last
+                // check-in (a check-in at 11pm won't re-prompt until 11pm the
+                // next night). Opt-in alternative to the calendar-day reset.
+                return Date.now.timeIntervalSince(last) >= 24 * 60 * 60
+            }
+            // Default: first use of the day — re-asks the first time the app
+            // is opened each calendar day (resets at midnight), regardless of
+            // how late the previous check-in was.
+            return !Calendar.current.isDateInToday(last)
+        case .everyAppLaunch:
+            // Always prompt on fresh app launch (scenePhase transitions to active from nothing)
+            // We'll let the caller decide based on initialization
+            return true
+        case .everyForeground:
+            // Always prompt when foreground (every scenePhase == .active)
+            return scenePhase == .active
+        }
+    }
+
+    static func record() {
+        UserDefaults.standard.set(Date.now.timeIntervalSince1970, forKey: lastCheckInKey)
+    }
+
+    static func reset() {
+        UserDefaults.standard.removeObject(forKey: lastCheckInKey)
+    }
+}
+
 struct CognitiveStateSelector: View {
 
     @Binding var isPresented: Bool
@@ -40,6 +138,12 @@ struct CognitiveStateSelector: View {
 
     /// Currently-selected mode (mirrors the active profile's pin/derive).
     @State private var current: DensityMode = .functional
+
+    /// First-launch fallback when this view runs BEFORE a profile exists.
+    /// The chosen mode is parked here; `ProfileSetupView.saveProfile` reads
+    /// the value when it creates the profile and applies it to the new
+    /// ProfilePreferences, then clears the key.
+    @AppStorage("firstLaunch.pendingDensityRaw") private var pendingDensityRaw: String = ""
 
     // MARK: - Body
 
@@ -103,9 +207,10 @@ struct CognitiveStateSelector: View {
     }
 
     /// The big calm escape button. Maps "I'm overwhelmed" → Survival.
-    /// Visually distinct from the picker below — full-width, accent
-    /// background, large vertical padding. This is the path designed
-    /// to feel like an exhale.
+    /// Visually distinct from the picker below — full-width, warm tinted
+    /// background, large vertical padding. The intentionally warm palette
+    /// (peach/ember) reads as inviting rather than the cool blue accent,
+    /// which carries an admin/info emotion in the design system.
     private var survivalButton: some View {
         Button {
             apply(.survival)
@@ -114,6 +219,7 @@ struct CognitiveStateSelector: View {
                 HStack(spacing: Tokens.Spacing.sm) {
                     Image(systemName: "leaf.fill")
                         .font(.system(size: 20, weight: .regular))
+                        .foregroundStyle(Color.warmEmber)
                     Text("I'm overwhelmed")
                         .font(Tokens.Typography.h2)
                         .fontWeight(.semibold)
@@ -126,10 +232,10 @@ struct CognitiveStateSelector: View {
             .padding(.horizontal, Tokens.Spacing.lg)
             .padding(.vertical, Tokens.Spacing.xl)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.appAccent.opacity(0.18))
+            .background(Color.warmEmber.opacity(0.18))
             .overlay(
                 RoundedRectangle(cornerRadius: Tokens.Border.radiusLarge)
-                    .strokeBorder(Color.appAccent.opacity(0.5), lineWidth: 1)
+                    .strokeBorder(Color.warmEmber.opacity(0.45), lineWidth: 1)
             )
             .foregroundColor(Color.appTextPrimary)
             .cornerRadius(Tokens.Border.radiusLarge)
@@ -207,10 +313,17 @@ struct CognitiveStateSelector: View {
         }
     }
 
-    /// Commit a mode: update the active profile's preferences, save the
-    /// model context, and dismiss. We set BOTH `currentEnergyLevel` (so
-    /// auto-derivation also lands on this mode) and `densityPinnedRaw`
-    /// (so the explicit choice persists past later energy fluctuations).
+    /// Commit a mode. Two code paths:
+    ///
+    /// • Settings mode (profile already exists) → write directly to the
+    ///   active profile's ProfilePreferences and save the model context.
+    /// • First-launch mode (no profile yet — capacity runs BEFORE profile
+    ///   setup) → stash the choice in `pendingDensityRaw`. ProfileSetupView
+    ///   will pick it up when it creates the profile.
+    ///
+    /// In both cases we set BOTH `currentEnergyLevel` (so auto-derivation
+    /// also lands on this mode) and `densityPinned` (so the explicit
+    /// choice persists past later energy fluctuations).
     private func apply(_ mode: DensityMode) {
         current = mode
 
@@ -219,11 +332,20 @@ struct CognitiveStateSelector: View {
             prefs.densityPinned = mode
             prefs.updatedAt = .now
             try? modelContext.save()
+        } else {
+            // No active profile yet — first-launch flow. Park the choice;
+            // ProfileSetupView reads + applies + clears it on save.
+            pendingDensityRaw = mode.rawValue
         }
 
         // Record the check-in so the stale-energy dot on the dashboard
         // anchor clears immediately.
         EnergyCheckInTracker.record()
+
+        // Record the capacity check-in timestamp so the "Once daily"
+        // frequency mode can throttle correctly. Harmless for the other
+        // modes (they ignore the timestamp).
+        CognitiveCheckInTracker.record()
 
         isPresented = false
     }
@@ -237,6 +359,111 @@ struct CognitiveStateSelector: View {
         case .functional: return 3
         case .high:       return 4
         }
+    }
+}
+
+// MARK: - Check-in frequency chooser (reusable)
+//
+// The four-option picker shared by the onboarding card and the standalone
+// first-launch step. Writes straight to the tracker on each tap so the
+// choice persists immediately; the surrounding flow marks "offered" when it
+// closes. Defaults its highlight to whatever the tracker currently holds
+// (.never for a fresh install).
+
+struct CheckInFrequencyChooser: View {
+
+    @State private var selection: CognitiveCheckInFrequency = CognitiveCheckInTracker.frequency
+
+    var body: some View {
+        VStack(spacing: Tokens.Spacing.sm) {
+            ForEach(CognitiveCheckInFrequency.allCases) { freq in
+                Button {
+                    selection = freq
+                    CognitiveCheckInTracker.frequency = freq
+                } label: {
+                    HStack(alignment: .top, spacing: Tokens.Spacing.md) {
+                        Image(systemName: selection == freq ? "circle.inset.filled" : "circle")
+                            .font(.system(size: 18))
+                            .foregroundColor(selection == freq ? Color.appAccent : Color.appBorder)
+                            .padding(.top, 2)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(freq.displayName)
+                                .font(Tokens.Typography.label)
+                                .foregroundColor(Color.appTextPrimary)
+                            Text(freq.description)
+                                .font(Tokens.Typography.caption)
+                                .foregroundColor(Color.appTextSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(Tokens.Spacing.base)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(minHeight: Tokens.Spacing.touchMinimum)
+                    .background(
+                        selection == freq
+                            ? Color.appAccent.opacity(0.08)
+                            : Color.appBackgroundSecondary
+                    )
+                    .cornerRadius(Tokens.Border.radiusMedium)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(freq.displayName). \(freq.description)")
+            }
+        }
+    }
+}
+
+// MARK: - Standalone check-in preference step
+//
+// Shown as its own first-launch sheet when the user skipped the onboarding
+// tour (declared overwhelm on first launch) and therefore never saw the
+// in-onboarding chooser. Surfaces the same choice on the next launch.
+
+struct CheckInPreferenceStep: View {
+
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Tokens.Spacing.xl) {
+                    VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
+                        Text("Capacity check-ins")
+                            .font(Tokens.Typography.h1)
+                            .foregroundColor(Color.appTextPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Text("When you open AuGenda, it can ask how you're doing and match the view to your capacity. It's off for now — pick what suits you. You can change this anytime in Settings.")
+                            .font(Tokens.Typography.body)
+                            .foregroundColor(Color.appTextSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    CheckInFrequencyChooser()
+                }
+                .padding(.horizontal, Tokens.Spacing.xl)
+                .padding(.vertical, Tokens.Spacing.lg)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Button {
+                isPresented = false
+            } label: {
+                Text("Done")
+                    .font(Tokens.Typography.label)
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, Tokens.Spacing.base)
+                    .background(Color.appAccent, in: RoundedRectangle(cornerRadius: Tokens.Border.radiusLarge))
+                    .foregroundColor(.black)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.defaultAction)
+            .padding(.horizontal, Tokens.Spacing.xl)
+            .padding(.bottom, Tokens.Spacing.lg)
+        }
+        .background(Color.appBackground)
     }
 }
 

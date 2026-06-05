@@ -44,6 +44,36 @@ final class AgendaItem {
     /// Body double mode: flag tasks that benefit from accountability presence
     var needsBodyDouble: Bool = false
 
+    /// Interest level (1 = tedious, 5 = genuinely interesting). Default 3
+    /// (neutral). Lets calendar items participate in the difficulty engine
+    /// alongside AgendaTask.
+    var interestLevel: Int = 3
+
+    // MARK: - Difficulty axes (six-axis difficulty model)
+    //
+    // All default to 0/false so existing data renders correctly without
+    // migration. See memory/task_difficulty_and_ai_enrichment.md for the
+    // formula + rationale.
+
+    /// Sensory load: environmental noise / light / smell / texture / crowd
+    /// exposure (0 = none, 3 = severe).
+    var sensoryLoad: Int = 0
+
+    /// Social load: synchronous communication weight (0 = solo, 3 = unknown
+    /// caller / negotiation).
+    var socialLoad: Int = 0
+
+    /// Initiation cost: first-step paralysis / dread weight, independent of
+    /// execution friction.
+    var initiationCost: Int = 0
+
+    /// Hyperfocus override — forces inclusion in survival mode regardless of
+    /// computed rank.
+    var specialInterest: Bool = false
+
+    /// Per-task AI enrichment opt-out.
+    var excludeFromAI: Bool = false
+
     // MARK: - Completion
     var isComplete: Bool = false
     var completedAt: Date? = nil

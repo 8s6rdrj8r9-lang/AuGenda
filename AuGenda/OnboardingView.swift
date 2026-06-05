@@ -44,6 +44,7 @@ struct OnboardingView: View {
             TabView(selection: $page) {
                 welcomeCard.tag(0)
                 captureCard.tag(1)
+                checkInCard.tag(2)
             }
             #if os(iOS)
             .tabViewStyle(.page(indexDisplayMode: .always))
@@ -59,7 +60,7 @@ struct OnboardingView: View {
                     .buttonStyle(.bordered)
                 }
                 Spacer()
-                if page < 1 {
+                if page < 2 {
                     Button("Next") {
                         withAnimation { page += 1 }
                     }
@@ -105,6 +106,37 @@ struct OnboardingView: View {
                 "You can refine a brain-dumped task later if you want. Or never. Both are fine."
             ]
         )
+    }
+
+    // MARK: - Card 3: Capacity check-ins
+
+    /// Interactive card — lets the user opt into the recurring "how are you?"
+    /// check-in here, during onboarding. Off by default; whatever they pick
+    /// is written straight to the tracker by CheckInFrequencyChooser. Wrapped
+    /// in a ScrollView so the four options never clip on smaller devices.
+    private var checkInCard: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Tokens.Spacing.lg) {
+                Image(systemName: "leaf.fill")
+                    .font(.system(size: 48, weight: .regular))
+                    .foregroundStyle(Color.warmEmber)
+
+                Text("Capacity check-ins")
+                    .font(Tokens.Typography.h1)
+                    .foregroundColor(Color.appTextPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text("AuGenda can ask “how are you?” when you open it, and match the view to your capacity. Off by default — pick what suits you. Change anytime in Settings.")
+                    .font(Tokens.Typography.body)
+                    .foregroundColor(Color.appTextPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                CheckInFrequencyChooser()
+            }
+            .padding(.horizontal, Tokens.Spacing.xl)
+            .padding(.vertical, Tokens.Spacing.lg)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 

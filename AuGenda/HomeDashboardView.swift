@@ -120,23 +120,29 @@ struct HomeDashboardView: View {
     }
 
     /// Today's not-yet-complete items, filtered by snooze + due-today.
+    /// Also applies the difficulty-rank ceiling from the current density mode:
+    /// survival sees ≤4, low ≤6, functional ≤8, high ≤10. `specialInterest`
+    /// items bypass the cap (hyperfocus override).
     private var todayItems: [AgendaItem] {
         let now = Date.now
         let endOfDay = Calendar.current.endOfDay(for: now)
+        let mode = density
         return profileItems.filter { item in
             if let snooze = item.snoozedUntil, snooze > now { return false }
-            return item.scheduledDate <= endOfDay
+            guard item.scheduledDate <= endOfDay else { return false }
+            return item.passes(densityFilter: mode)
         }
     }
 
-    /// Top-ranked actionable tasks for the For-Now section.
+    /// Top-ranked actionable tasks for the For-Now section. The old hand-rolled
+    /// gate (friction ≤ energy AND energy ≤ energy) is now subsumed by the
+    /// six-axis difficulty rank — friction + energy contribute to the rank
+    /// alongside sensory/social/initiation load, and the density mode caps
+    /// the rank ceiling. See DifficultyEngine.swift.
     private var forNowTasks: [AgendaTask] {
-        profileTasks
-            .filter {
-                $0.isActionable &&
-                $0.frictionLevel <= max(energyLevel, 2) &&
-                $0.energyRequired <= energyLevel
-            }
+        let mode = density
+        return profileTasks
+            .filter { $0.isActionable && $0.passes(densityFilter: mode) }
             .sorted { $0.ndPriorityScore > $1.ndPriorityScore }
     }
 

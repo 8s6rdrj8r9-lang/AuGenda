@@ -268,6 +268,24 @@ struct ProfileSetupView: View {
     /// True when shown as the first-launch onboarding — no cancel, dismiss disabled.
     var isOnboarding: Bool = false
 
+    /// Capacity choice parked by `CognitiveStateSelector` when it ran before
+    /// us. Drives two things:
+    ///   1. Minimal-mode rendering (Survival/Low → name-only screen)
+    ///   2. Carrying the density pin onto the new profile's preferences
+    @AppStorage("firstLaunch.pendingDensityRaw") private var pendingDensityRaw: String = ""
+
+    private var pendingMode: DensityMode? {
+        DensityMode(rawValue: pendingDensityRaw)
+    }
+
+    /// Survival or Low capacity users get a single-screen "what should we
+    /// call you" form, with everything else defaulted. Functional/High see
+    /// the full 3-step Name → Neurotypes → Avatar flow.
+    private var minimalMode: Bool {
+        guard isOnboarding, let mode = pendingMode else { return false }
+        return mode == .survival || mode == .low
+    }
+
     @State private var step = 0
     @State private var name = ""
     @State private var selectedRole: ProfileRole = .adult
@@ -279,6 +297,99 @@ struct ProfileSetupView: View {
     private var isFirstProfile: Bool { profiles.isEmpty }
 
     var body: some View {
+        if minimalMode {
+            minimalBody
+        } else {
+            fullBody
+        }
+    }
+
+    // MARK: - Minimal body (Survival / Low first-launch)
+    //
+    // One screen, one decision: a name. Everything else gets defaulted
+    // (AuDHD neurotype preset, coordinator role for the first profile,
+    // a randomized avatar color). Onboarding doesn't follow this path
+    // either — the user said they're overwhelmed; we honour that.
+
+    private var minimalBody: some View {
+        // Empty name → Done is disabled AND visibly muted. SwiftUI's
+        // default disabled style on toolbar buttons can be too subtle
+        // (just a small opacity drop), so we hammer it manually.
+        let nameEmpty = name.trimmingCharacters(in: .whitespaces).isEmpty
+
+        return NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Just one thing")
+                            .font(.caption).fontWeight(.medium)
+                            .foregroundStyle(.secondary)
+                        Text("What should we call you?")
+                            .font(.largeTitle).fontWeight(.bold)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextField("First name or nickname", text: $name)
+                            .font(.title3)
+                            .padding(14)
+                            .background(
+                                Color.secondary.opacity(0.1),
+                                in: RoundedRectangle(cornerRadius: 12)
+                            )
+                            .submitLabel(.done)
+                            .onSubmit { if !name.isEmpty { saveProfile() } }
+                    }
+
+                    Text("Everything else is set to a reasonable default. You can change neurotypes, avatar, and more from Settings whenever you have capacity.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            // Soft warm dawn — carries the warm-ember tone from the
+            // CognitiveStateSelector survival button into the next screen,
+            // so the emotional through-line of "you're held here" persists
+            // past the overwhelm gate. Fades to transparent by mid-screen
+            // so the form has a calm neutral base to sit on.
+            .scrollContentBackground(.hidden)
+            .background {
+                LinearGradient(
+                    colors: [
+                        Color.warmEmber.opacity(0.22),
+                        Color.warmEmber.opacity(0.08),
+                        Color.clear
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+            }
+            .navigationTitle("Welcome")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { saveProfile() }
+                        .fontWeight(.semibold)
+                        .foregroundStyle(nameEmpty ? Color.secondary : Color.appAccent)
+                        .opacity(nameEmpty ? 0.45 : 1.0)
+                        .disabled(nameEmpty)
+                        .accessibilityHint(nameEmpty ? "Type a name to enable" : "")
+                }
+            }
+        }
+        .interactiveDismissDisabled(isOnboarding)
+        .onAppear { if profiles.isEmpty { selectedRole = .coordinator } }
+    }
+
+    // MARK: - Full body (Functional / High, or non-onboarding)
+
+    private var fullBody: some View {
         NavigationStack {
             VStack(spacing: 0) {
 
@@ -585,21 +696,49 @@ struct ProfileSetupView: View {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         guard !trimmedName.isEmpty else { return }
 
+        // In minimal mode, neurotypes haven't been picked yet — default to the
+        // AuDHD preset (the app's namesake) since this user came in via the
+        // overwhelm gate. They can adjust from Settings later.
+        let effectiveNeurotypes: [Neurotype]
+        if minimalMode {
+            effectiveNeurotypes = [.adhd, .autism]
+        } else {
+            effectiveNeurotypes = Array(selectedNeurotypes)
+        }
+
+        // Minimal mode: also randomize the avatar color so two minimal-mode
+        // setups don't all land on the same blue.
+        let effectiveColorHex = minimalMode
+            ? ProfileSetupView.avatarColors.randomElement() ?? avatarColorHex
+            : avatarColorHex
+
         let existingCount = (try? modelContext.fetch(FetchDescriptor<Profile>()))?.count ?? 0
 
         let profile = Profile(
             name: trimmedName,
-            role: selectedRole,
-            neurotypes: Array(selectedNeurotypes),
+            role: minimalMode && profiles.isEmpty ? .coordinator : selectedRole,
+            neurotypes: effectiveNeurotypes,
             sortOrder: existingCount
         )
         profile.avatarImageData = avatarImageData
-        profile.avatarColorHex = avatarColorHex
+        profile.avatarColorHex = effectiveColorHex
 
-        let filtered = selectedNeurotypes.subtracting([.neurotypical])
+        // Build preferences. Filter out .neurotypical from the preset key
+        // since it's a no-op selection (no ND-specific defaults).
+        let filtered = Set(effectiveNeurotypes).subtracting([.neurotypical])
         let prefs = filtered.isEmpty
             ? ProfilePreferences()
             : ProfilePreferences.makePreset(for: Array(filtered))
+
+        // Apply the capacity choice that CognitiveStateSelector parked
+        // before this view ran. Single source of truth: the @AppStorage
+        // key. Clear it after consumption so a later return through this
+        // flow (unlikely but possible) doesn't pick up a stale value.
+        if let mode = pendingMode {
+            prefs.densityPinned = mode
+            prefs.currentEnergyLevel = energyLevelForMode(mode)
+        }
+        pendingDensityRaw = ""
 
         profile.preferences = prefs
         modelContext.insert(profile)
@@ -608,6 +747,15 @@ struct ProfileSetupView: View {
 
         profileManager.switchTo(profile)
         isPresented = false
+    }
+
+    private func energyLevelForMode(_ mode: DensityMode) -> Int {
+        switch mode {
+        case .survival:   return 1
+        case .low:        return 2
+        case .functional: return 3
+        case .high:       return 4
+        }
     }
 }
 
@@ -700,6 +848,8 @@ struct ProfileSettingsView: View {
     @State private var showNeurotypeEditor = false
     @State private var showResetConfirm = false
     @State private var showCapacitySelector = false
+    @State private var checkInFrequency = CognitiveCheckInTracker.frequency
+    @State private var dailyRolling24h = CognitiveCheckInTracker.dailyUsesRollingWindow
 
     var body: some View {
         Form {
@@ -791,6 +941,35 @@ struct ProfileSettingsView: View {
                     }
                 }
                 .buttonStyle(.plain)
+
+                Picker("Capacity check-ins", selection: $checkInFrequency) {
+                    ForEach(CognitiveCheckInFrequency.allCases) { freq in
+                        Text(freq.displayName).tag(freq)
+                    }
+                }
+                .onChange(of: checkInFrequency) { _, _ in
+                    CognitiveCheckInTracker.frequency = checkInFrequency
+                }
+
+                // Only meaningful for the daily mode: choose whether "once
+                // daily" means the first use of each calendar day, or a full
+                // 24 hours since the last check-in.
+                if checkInFrequency == .daily {
+                    Toggle(isOn: $dailyRolling24h) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Space check-ins 24h apart")
+                            Text(dailyRolling24h
+                                 ? "Re-asks 24 hours after your last check-in."
+                                 : "Re-asks the first time you open the app each day.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .tint(Color.appAccent)
+                    .onChange(of: dailyRolling24h) { _, _ in
+                        CognitiveCheckInTracker.dailyUsesRollingWindow = dailyRolling24h
+                    }
+                }
 
                 Toggle("Energy check-ins", isOn: $prefs.energyTrackingEnabled)
                     .tint(Color.appAccent)

@@ -112,7 +112,14 @@ struct ContentView: View {
             .tint(Color.appAccent)
         }
         .environment(\.appFont, profileManager.activeFont)
-        .preferredColorScheme(.dark)
+        // No .preferredColorScheme — the app follows the system's
+        // light/dark setting. All view-level colours go through the
+        // adaptive `Color.app*` helpers (defined in AuDHDComponents.swift)
+        // which switch to slate900/white for backgrounds and slate900/
+        // slate600 for text on the trait-collection change.
+        // The watch keeps its true-black background per spec §10 —
+        // that's an OLED-power and design-intent choice, not a system
+        // appearance thing.
         .onAppear {
             setupOnLaunch()
         }
@@ -750,6 +757,16 @@ struct SettingsView: View {
     /// Mirrors the same key as ContentView's @AppStorage.
     @AppStorage("home.dashboard.useNewHome") private var useNewHomeDashboard: Bool = true
 
+    // Read-only mirrors of the AI Enrichment keys so the AI row on the
+    // main Settings list can show on/off + the active provider's name
+    // without navigating in.
+    @AppStorage("ai.enabled") private var aiEnrichmentEnabled: Bool = false
+    @AppStorage("ai.activeProvider") private var aiActiveProviderRaw: String = ""
+
+    private var activeAIProviderLabel: String {
+        AIProvider(rawValue: aiActiveProviderRaw)?.displayName ?? "no provider chosen"
+    }
+
     @State private var showEraseConfirm = false
 
     /// Toggle binding for notificationPrivacyStrict — lives on the active
@@ -783,6 +800,34 @@ struct SettingsView: View {
                     Text("Experiments")
                 } footer: {
                     Text("Density adapts to your energy level; pin a capacity mode via the badge on the dashboard. Toggle off to revert to the simpler legacy list.")
+                }
+
+                // ── AI Enrichment ──
+                // Off by default; navigates into the dedicated settings
+                // screen where the user opts in + picks a provider.
+                Section {
+                    NavigationLink {
+                        AIEnrichmentSettingsView()
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "sparkles")
+                                .foregroundStyle(Color.warmEmber)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("AI Enrichment")
+                                    .fontWeight(.medium)
+                                Text(aiEnrichmentEnabled
+                                     ? "On — \(activeAIProviderLabel)"
+                                     : "Off — no task data leaves your device")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Assistive")
+                } footer: {
+                    Text("Auto-fill task metadata (difficulty axes, sub-tasks, time estimates) using on-device or cloud AI. Opt-in, off by default.")
                 }
 
                 // ── Privacy ──
@@ -975,9 +1020,64 @@ struct AddAgendaItemView: View {
     @State private var contextTag = ""
     @State private var assignedToProfileID: UUID? = nil
 
+    // Six-axis difficulty model — three of these are NEW dimensions added
+    // for the difficulty rank engine. Hidden behind a disclosure so the
+    // basic form stays simple. See memory/task_difficulty_and_ai_enrichment.md
+    @State private var energyRequired = 2
+    @State private var interestLevel = 3
+    @State private var sensoryLoad = 0
+    @State private var socialLoad = 0
+    @State private var initiationCost = 0
+    @State private var specialInterest = false
+    @State private var excludeFromAI = false
+    @State private var showMoreDimensions = false
+
+    // AI enrichment local UI state
+    @State private var enrichState: EnrichState = .idle
+    @State private var enrichmentNote: String? = nil
+    @AppStorage("ai.enabled") private var aiEnabled: Bool = false
+    @AppStorage("ai.activeProvider") private var activeProviderRaw: String = ""
+    @AppStorage("ai.showEnrichButtons") private var showEnrichButtons: Bool = true
+    @AppStorage("ai.autoEnrichNewTasks") private var autoEnrich: Bool = false
+
     private var activeProfile: Profile? { profileManager.activeProfile }
     private var copy: NDCopy { NDCopy.from(profileManager) }
     private var frictionLabelName: String { copy.frictionPrompt }
+
+    /// AI enrichment is offered only when:
+    ///   1. The master switch is on
+    ///   2. The user has picked a provider
+    ///   3. The Show-Enrich-Buttons toggle is on
+    ///   4. This task isn't flagged excludeFromAI
+    ///   5. There's a non-empty title to enrich
+    private var canOfferEnrichment: Bool {
+        aiEnabled
+        && !activeProviderRaw.isEmpty
+        && showEnrichButtons
+        && !excludeFromAI
+        && !title.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private enum EnrichState: Equatable {
+        case idle
+        case running
+        case applied(summary: String)
+        case failed(message: String)
+    }
+
+    /// Live difficulty rank preview — re-computed as the user moves sliders.
+    private var previewRank: Int {
+        DifficultyEngine.rank(
+            friction:       frictionLevel,
+            energy:         energyRequired,
+            sensoryLoad:    sensoryLoad,
+            socialLoad:     socialLoad,
+            initiationCost: initiationCost,
+            interest:       interestLevel
+        )
+    }
+
+    private var previewBand: DifficultyBand { DifficultyBand(rank: previewRank) }
 
     /// Only show the assignment section if the active profile can assign and there are other profiles
     private var canShowAssignment: Bool {
@@ -1018,6 +1118,136 @@ struct AddAgendaItemView: View {
 
                 Section("Context") {
                     TextField("e.g. home, phone, computer", text: $contextTag)
+                }
+
+                // AI enrich button — only shown when AI is enabled AND a
+                // provider is selected AND this task isn't excluded.
+                if canOfferEnrichment {
+                    Section {
+                        Button {
+                            Task { await runEnrich() }
+                        } label: {
+                            HStack(spacing: 10) {
+                                switch enrichState {
+                                case .idle:
+                                    Image(systemName: "sparkles")
+                                        .foregroundStyle(Color.warmEmber)
+                                    Text("Enrich with AI")
+                                        .foregroundStyle(.primary)
+                                case .running:
+                                    ProgressView().controlSize(.small)
+                                    Text("Enriching…")
+                                        .foregroundStyle(.secondary)
+                                case .applied(let summary):
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.green)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Filled in").foregroundStyle(.primary)
+                                        Text(summary).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                case .failed(let msg):
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundStyle(.orange)
+                                    Text(msg).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                            }
+                        }
+                        .disabled(enrichState == .running)
+                    } footer: {
+                        if let note = enrichmentNote {
+                            Text(note).font(.caption2).foregroundStyle(.secondary)
+                        } else if let provider = AIProvider(rawValue: activeProviderRaw) {
+                            Text("Sends the title to \(provider.displayName) and fills in the dimensions below. Your assigned interest level is not sent.")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                // More dimensions — collapsed by default. Surfaces the three
+                // newer axes (sensory / social / initiation) plus energy +
+                // interest. Live difficulty band preview at the bottom.
+                Section {
+                    DisclosureGroup(isExpanded: $showMoreDimensions) {
+                        VStack(alignment: .leading, spacing: 18) {
+                            dimensionSlider(
+                                title: "Energy required",
+                                tooltip: "Cognitive + physical cost. 1 = low, 4 = high.",
+                                value: $energyRequired,
+                                range: 1...4
+                            )
+                            dimensionSlider(
+                                title: "Interest",
+                                tooltip: "How engaged you are. Higher interest absorbs difficulty.",
+                                value: $interestLevel,
+                                range: 1...5
+                            )
+                            dimensionSlider(
+                                title: "Sensory load",
+                                tooltip: "Noise, light, smell, crowd exposure. 0 = none, 3 = severe.",
+                                value: $sensoryLoad,
+                                range: 0...3
+                            )
+                            dimensionSlider(
+                                title: "Social load",
+                                tooltip: "Synchronous communication weight. 0 = solo, 3 = unknown caller.",
+                                value: $socialLoad,
+                                range: 0...3
+                            )
+                            dimensionSlider(
+                                title: "Initiation cost",
+                                tooltip: "First-step / dread weight, independent of execution effort.",
+                                value: $initiationCost,
+                                range: 0...3
+                            )
+
+                            Toggle(isOn: $specialInterest) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Special interest").font(.subheadline)
+                                    Text("Bypasses difficulty filter — always shown.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .tint(Color.warmEmber)
+
+                            Toggle(isOn: $excludeFromAI) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Exclude from AI enrichment")
+                                        .font(.subheadline)
+                                    Text("Hides the Enrich button on this task. Auto-enrich skips it.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .tint(Color.appAccent)
+
+                            // Live difficulty preview
+                            HStack(spacing: 10) {
+                                Image(systemName: "scope")
+                                    .foregroundStyle(.secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Difficulty: \(previewBand.label)")
+                                        .font(.subheadline).fontWeight(.medium)
+                                    Text(previewBand.description)
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                Color.secondary.opacity(0.08),
+                                in: RoundedRectangle(cornerRadius: 10)
+                            )
+                        }
+                        .padding(.vertical, 6)
+                    } label: {
+                        HStack {
+                            Text("More dimensions")
+                            Spacer()
+                            Text(previewBand.label)
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
                 }
 
                 if canShowAssignment {
@@ -1068,10 +1298,93 @@ struct AddAgendaItemView: View {
             priority = existing.priority
             contextTag = existing.contextTag
             assignedToProfileID = existing.assignedToProfileID ?? activeProfile?.clientID
+
+            // Six-axis difficulty fields
+            energyRequired   = existing.energyRequired
+            interestLevel    = existing.interestLevel
+            sensoryLoad      = existing.sensoryLoad
+            socialLoad       = existing.socialLoad
+            initiationCost   = existing.initiationCost
+            specialInterest  = existing.specialInterest
+            excludeFromAI    = existing.excludeFromAI
         } else {
             // Fresh form — creation mode
             assignedToProfileID = preAssignedProfileID ?? activeProfile?.clientID
         }
+    }
+
+    /// Call the active AI provider with the current title + neurotype
+    /// context, then apply any returned fields to state. Interest level
+    /// is never written even if the provider sends one — interest stays
+    /// the user's.
+    private func runEnrich() async {
+        guard let provider = AIProvider(rawValue: activeProviderRaw),
+              let enricher = AIEnricherRegistry.enricher(for: provider) else {
+            enrichState = .failed(message: "No provider configured.")
+            return
+        }
+
+        let neurotypes: [String] = activeProfile?.neurotypes.map(\.rawValue) ?? []
+        let density: String? = profileManager.activePreferences?.densityPinned?.rawValue
+            ?? DensityMode.autoFrom(
+                energyLevel: profileManager.activePreferences?.currentEnergyLevel ?? 3
+            ).rawValue
+
+        // Snapshot personalization (about-me + tone + memory + interest
+        // opt-in). Nil when the user hasn't set anything — providers
+        // behave as cold-context in that case.
+        let personalization = await MainActor.run {
+            PersonalizationStore.shared.snapshot()
+        }
+
+        let context = EnrichmentContext(
+            rawTitle: title.trimmingCharacters(in: .whitespaces),
+            userNote: contextTag.isEmpty ? nil : contextTag,
+            neurotypes: neurotypes,
+            currentDensity: density,
+            personalization: personalization
+        )
+
+        enrichState = .running
+        do {
+            let result = try await enricher.enrich(context: context)
+            apply(result)
+            await MainActor.run {
+                AIUsageLedger.shared.record(result)
+                // Memory layer — record what just happened so the next
+                // enrichment has continuity. Uses the final difficulty
+                // band, not the AI's guess, so memory reflects what the
+                // user actually ended up with.
+                PersonalizationStore.shared.recordEnrichment(
+                    title: title,
+                    band: DifficultyBand(rank: previewRank)
+                )
+            }
+            let band = DifficultyBand(rank: previewRank).label
+            enrichState = .applied(summary: "Difficulty: \(band) · review below.")
+        } catch let error as AIEnricherError {
+            enrichState = .failed(message: error.errorDescription ?? "Failed")
+        } catch {
+            enrichState = .failed(message: "Unexpected error.")
+        }
+    }
+
+    /// Apply non-nil enrichment fields to local state. Interest is only
+    /// written when the user opted into AI inference; otherwise the
+    /// enrichment's interest field is guaranteed nil by the adapters'
+    /// defense-in-depth strip.
+    private func apply(_ enrichment: TaskEnrichment) {
+        if let v = enrichment.title, !v.isEmpty { title = v }
+        if let v = enrichment.friction        { frictionLevel  = v }
+        if let v = enrichment.energy          { energyRequired = v }
+        if let v = enrichment.sensoryLoad     { sensoryLoad    = v }
+        if let v = enrichment.socialLoad      { socialLoad     = v }
+        if let v = enrichment.initiationCost  { initiationCost = v }
+        if let v = enrichment.interest        { interestLevel  = v }   // honored only when opt-in is on
+        if let v = enrichment.contextTag, !v.isEmpty { contextTag = v }
+        // Expand "More dimensions" so the user can immediately see what
+        // changed. They can collapse it again after reviewing.
+        showMoreDimensions = true
     }
 
     private func saveAndDismiss() {
@@ -1084,6 +1397,16 @@ struct AddAgendaItemView: View {
             existing.contextTag = contextTag
             existing.assignedToProfileID = assignedToProfileID
             existing.updatedAt = .now
+
+            // Six-axis difficulty fields
+            existing.energyRequired   = energyRequired
+            existing.interestLevel    = interestLevel
+            existing.sensoryLoad      = sensoryLoad
+            existing.socialLoad       = socialLoad
+            existing.initiationCost   = initiationCost
+            existing.specialInterest  = specialInterest
+            existing.excludeFromAI    = excludeFromAI
+
             // Reschedule notifications so the new time is reflected
             notificationManager.cancelNotifications(for: existing)
             notificationManager.scheduleNotifications(for: existing)
@@ -1096,6 +1419,13 @@ struct AddAgendaItemView: View {
                 frictionLevel: frictionLevel,
                 contextTag: contextTag
             )
+            item.energyRequired  = energyRequired
+            item.interestLevel   = interestLevel
+            item.sensoryLoad     = sensoryLoad
+            item.socialLoad      = socialLoad
+            item.initiationCost  = initiationCost
+            item.specialInterest = specialInterest
+            item.excludeFromAI   = excludeFromAI
             item.assignedToProfileID = assignedToProfileID
             // Mark the creator only when assigning to someone else
             if assignedToProfileID != activeProfile?.clientID {
@@ -1106,6 +1436,36 @@ struct AddAgendaItemView: View {
             notificationManager.scheduleNotifications(for: item)
         }
         isPresented = false
+    }
+
+    /// Compact slider row used for each of the six axes. Title on top, range
+    /// label trailing, slider below. Tooltip kept terse so the form doesn't
+    /// turn into a reading exercise.
+    @ViewBuilder
+    private func dimensionSlider(
+        title: String,
+        tooltip: String,
+        value: Binding<Int>,
+        range: ClosedRange<Int>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title).font(.subheadline).fontWeight(.medium)
+                Spacer()
+                Text("\(value.wrappedValue) / \(range.upperBound)")
+                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+            }
+            Slider(
+                value: Binding(
+                    get: { Double(value.wrappedValue) },
+                    set: { value.wrappedValue = Int($0.rounded()) }
+                ),
+                in: Double(range.lowerBound)...Double(range.upperBound),
+                step: 1
+            )
+            .tint(Color.appAccent)
+            Text(tooltip).font(.caption2).foregroundStyle(.secondary)
+        }
     }
 }
 

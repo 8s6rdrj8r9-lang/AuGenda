@@ -28,6 +28,17 @@ struct TaskDetailView: View {
     @State private var showEdit = false
     @State private var completedAnimation = false
 
+    // AI enrichment
+    @AppStorage("ai.enabled") private var aiEnabled: Bool = false
+    @AppStorage("ai.showEnrichButtons") private var showEnrichButtons: Bool = true
+    @AppStorage("ai.activeProvider") private var activeProviderRaw: String = ""
+    @StateObject private var personalization = PersonalizationStore.shared
+
+    @State private var isEnriching = false
+    @State private var pendingEnrichment: TaskEnrichment? = nil
+    @State private var showEnrichmentPreview = false
+    @State private var enrichmentError: String? = nil
+
     /// Resolves the friction label text from the active profile's language preference.
     private var frictionLabelText: String {
         switch profileManager.activePreferences?.frictionLabel ?? .friction {
@@ -35,6 +46,10 @@ struct TaskDetailView: View {
         case .effort:   return "Effort level"
         case .energy:   return "Energy cost"
         }
+    }
+
+    private var canEnrich: Bool {
+        aiEnabled && showEnrichButtons && !task.excludeFromAI && !activeProviderRaw.isEmpty
     }
 
     private var sortedSteps: [TaskStep] {
@@ -191,6 +206,30 @@ struct TaskDetailView: View {
                             .buttonStyle(.plain)
                             .scaleEffect(completedAnimation ? 1.04 : 1.0)
                         }
+
+                        // AI enrichment
+                        if canEnrich {
+                            Button {
+                                Task { await runEnrichment() }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    if isEnriching {
+                                        ProgressView().controlSize(.small)
+                                        Text("Enriching…")
+                                    } else {
+                                        Image(systemName: "sparkles")
+                                        Text("Enrich with AI")
+                                    }
+                                }
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                                .padding(16)
+                                .background(Color.purple.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+                                .foregroundStyle(.purple)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isEnriching)
+                        }
                     }
                 }
                 .padding()
@@ -200,6 +239,19 @@ struct TaskDetailView: View {
             .navigationBarTitleDisplayMode(.large)
             #endif
             .toolbar {
+                ToolbarItem(placement: {
+                    #if os(iOS)
+                    return .navigationBarLeading
+                    #else
+                    return .cancellationAction
+                    #endif
+                }()) {
+                    Button {
+                        showEdit = true
+                    } label: {
+                        Image(systemName: "pencil")
+                    }
+                }
                 ToolbarItem(placement: {
                     #if os(iOS)
                     return .navigationBarTrailing
@@ -217,10 +269,110 @@ struct TaskDetailView: View {
             .presentationDragIndicator(.visible)
             #endif
             }
+            .sheet(isPresented: $showEdit) {
+                AddTaskView(isPresented: $showEdit, editingTask: task)
+                #if os(iOS)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                #endif
+            }
+            .sheet(isPresented: $showEnrichmentPreview, onDismiss: { pendingEnrichment = nil }) {
+                if let enrichment = pendingEnrichment {
+                    EnrichmentPreviewSheet(
+                        task: task,
+                        enrichment: enrichment,
+                        allowInterestInference: personalization.allowInterestInference,
+                        onApply: {
+                            applyEnrichment(enrichment)
+                            showEnrichmentPreview = false
+                        },
+                        onDismiss: { showEnrichmentPreview = false }
+                    )
+                    #if os(iOS)
+                        .presentationDetents([.large])
+                        .presentationDragIndicator(.visible)
+                    #endif
+                }
+            }
+            .alert(
+                "Enrichment failed",
+                isPresented: Binding(
+                    get: { enrichmentError != nil },
+                    set: { if !$0 { enrichmentError = nil } }
+                ),
+                presenting: enrichmentError
+            ) { _ in
+                Button("OK", role: .cancel) { enrichmentError = nil }
+            } message: { msg in
+                Text(msg)
+            }
         }
     }
 
     // MARK: - Actions
+
+    @MainActor
+    private func runEnrichment() async {
+        guard let provider = AIProvider(rawValue: activeProviderRaw),
+              let enricher = AIEnricherRegistry.enricher(for: provider) else { return }
+
+        isEnriching = true
+
+        let neurotypes = profileManager.activeProfile?.neurotypes.map(\.displayName) ?? []
+        let prefs = profileManager.activePreferences
+        let mode: DensityMode = prefs?.densityPinned
+            ?? DensityMode.autoFrom(energyLevel: prefs?.currentEnergyLevel ?? 3)
+        let personalizationContext = personalization.snapshot()
+
+        let context = EnrichmentContext(
+            rawTitle: task.title,
+            userNote: task.notes.isEmpty ? nil : task.notes,
+            neurotypes: neurotypes,
+            currentDensity: mode.rawValue,
+            personalization: personalizationContext
+        )
+
+        do {
+            let result = try await enricher.enrich(context: context)
+            pendingEnrichment = result
+            showEnrichmentPreview = true
+        } catch {
+            enrichmentError = (error as? LocalizedError)?.errorDescription
+                ?? error.localizedDescription
+        }
+
+        isEnriching = false
+    }
+
+    private func applyEnrichment(_ enrichment: TaskEnrichment) {
+        if let t = enrichment.title, !t.isEmpty { task.title = t }
+        if let desc = enrichment.taskDescription, !desc.isEmpty, task.notes.isEmpty {
+            task.notes = desc
+        }
+        if let f = enrichment.friction      { task.frictionLevel   = f }
+        if let e = enrichment.energy        { task.energyRequired  = e }
+        if let s = enrichment.sensoryLoad   { task.sensoryLoad     = s }
+        if let c = enrichment.socialLoad    { task.socialLoad      = c }
+        if let i = enrichment.initiationCost { task.initiationCost = i }
+        if let n = enrichment.interest, personalization.allowInterestInference {
+            task.interestLevel = n
+        }
+        if let mins = enrichment.estimatedMinutes { task.estimatedMinutes = mins }
+        if let ctx = enrichment.contextTag, !ctx.isEmpty { task.contextTag = ctx }
+
+        if let subTasks = enrichment.subTasks, !subTasks.isEmpty {
+            let existingCount = task.steps?.count ?? 0
+            for (i, stepTitle) in subTasks.enumerated() {
+                let step = TaskStep(title: stepTitle, sortOrder: existingCount + i)
+                step.parentTask = task
+                modelContext.insert(step)
+            }
+        }
+
+        task.updatedAt = .now
+        try? modelContext.save()
+        personalization.recordEnrichment(title: task.title, band: task.difficultyBand)
+    }
 
     private func markComplete() {
         #if os(iOS)
@@ -250,6 +402,150 @@ struct TaskDetailView: View {
         case 2: return "med energy"
         default: return "high energy"
         }
+    }
+}
+
+
+// MARK: - Enrichment Preview Sheet
+
+struct EnrichmentPreviewSheet: View {
+
+    let task: AgendaTask
+    let enrichment: TaskEnrichment
+    let allowInterestInference: Bool
+    let onApply: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                // Confidence row
+                if let conf = enrichment.confidence {
+                    Section {
+                        HStack {
+                            Text("AI confidence")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text("\(Int(conf * 100))%")
+                                .fontWeight(.medium)
+                                .monospacedDigit()
+                                .foregroundStyle(conf >= 0.7 ? .green : conf >= 0.4 ? .orange : .red)
+                        }
+                    }
+                }
+
+                // Field changes
+                let changes = changeItems
+                if !changes.isEmpty {
+                    Section("Proposed changes") {
+                        ForEach(changes, id: \.label) { item in
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(item.label)
+                                    .foregroundStyle(.secondary)
+                                    .frame(minWidth: 110, alignment: .leading)
+                                Spacer(minLength: 0)
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text(item.after)
+                                        .fontWeight(.medium)
+                                    if let before = item.before {
+                                        Text(before)
+                                            .font(.caption)
+                                            .foregroundStyle(.tertiary)
+                                            .strikethrough()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Sub-tasks
+                if let subTasks = enrichment.subTasks, !subTasks.isEmpty {
+                    Section("Suggested steps (\(subTasks.count) new)") {
+                        ForEach(subTasks, id: \.self) { step in
+                            Label(step, systemImage: "circle")
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                }
+
+                // Description (only shown when current notes are empty)
+                if let desc = enrichment.taskDescription, !desc.isEmpty, task.notes.isEmpty {
+                    Section("Suggested notes") {
+                        Text(desc)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if changes.isEmpty
+                    && (enrichment.subTasks ?? []).isEmpty
+                    && (enrichment.taskDescription == nil || !task.notes.isEmpty) {
+                    Section {
+                        Text("No changes suggested — task metadata looks accurate.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("AI Proposal")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Apply") {
+                        #if os(iOS)
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        #endif
+                        onApply()
+                    }
+                    .fontWeight(.semibold)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Dismiss", action: onDismiss)
+                }
+            }
+        }
+    }
+
+    private struct ChangeItem {
+        let label: String
+        let before: String?
+        let after: String
+    }
+
+    private var changeItems: [ChangeItem] {
+        var items: [ChangeItem] = []
+        if let t = enrichment.title, !t.isEmpty, t != task.title {
+            items.append(.init(label: "Title", before: task.title, after: t))
+        }
+        if let f = enrichment.friction, f != task.frictionLevel {
+            items.append(.init(label: "Friction", before: "\(task.frictionLevel)", after: "\(f)"))
+        }
+        if let e = enrichment.energy, e != task.energyRequired {
+            items.append(.init(label: "Energy", before: "\(task.energyRequired)", after: "\(e)"))
+        }
+        if let s = enrichment.sensoryLoad, s != task.sensoryLoad {
+            items.append(.init(label: "Sensory load", before: "\(task.sensoryLoad)", after: "\(s)"))
+        }
+        if let c = enrichment.socialLoad, c != task.socialLoad {
+            items.append(.init(label: "Social load", before: "\(task.socialLoad)", after: "\(c)"))
+        }
+        if let i = enrichment.initiationCost, i != task.initiationCost {
+            items.append(.init(label: "Initiation cost", before: "\(task.initiationCost)", after: "\(i)"))
+        }
+        if let n = enrichment.interest, n != task.interestLevel, allowInterestInference {
+            items.append(.init(label: "Interest", before: "\(task.interestLevel)", after: "\(n)"))
+        }
+        if let mins = enrichment.estimatedMinutes, mins != task.estimatedMinutes {
+            items.append(.init(label: "Est. time",
+                               before: "\(task.estimatedMinutes)m", after: "\(mins)m"))
+        }
+        if let ctx = enrichment.contextTag, !ctx.isEmpty, ctx != task.contextTag {
+            items.append(.init(label: "Context",
+                               before: task.contextTag.isEmpty ? nil : task.contextTag,
+                               after: ctx))
+        }
+        return items
     }
 }
 

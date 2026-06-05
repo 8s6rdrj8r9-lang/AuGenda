@@ -12,9 +12,38 @@
 
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>AuGenda checks the weather for your outdoor routine blocks so it can suggest what to grab — a coat, sunscreen, umbrella. Location stays on your device and is only sent to Apple's WeatherKit. AuGenda never shares your location with anyone else.</string>
+
+	<!-- Launch screen — solid dark color matching the dashboard's actual
+	     appBackground in dark mode (slate900 / #0F172A). Without this iOS
+	     defaults to a white launch screen and users see a brief light flash
+	     before SwiftUI's preferredColorScheme(.dark) takes over. The colour
+	     asset has no light/dark variants so launch stays dark on every
+	     system appearance. -->
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+	</dict>
+
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
+	</array>
+
+	<!-- Google Sign-In (Gemini OAuth) callback. The scheme is the reversed
+	     form of the iOS OAuth client ID in GoogleOAuth.swift; the redirect
+	     URI is "<scheme>:/oauth2redirect". ASWebAuthenticationSession matches
+	     the callback on this scheme. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>google-oauth-gemini</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.416358058147-9g1kdn4bpip0ink7mg0ou6foj1a3nk4k</string>
+			</array>
+		</dict>
 	</array>
 </dict>
 </plist>

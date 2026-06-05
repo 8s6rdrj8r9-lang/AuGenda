@@ -619,6 +619,8 @@ struct InterestPips: View {
 struct AddTaskView: View {
 
     @Binding var isPresented: Bool
+    var editingTask: AgendaTask? = nil
+
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var profileManager: ActiveProfileManager
     @Query(sort: \Profile.sortOrder) private var profiles: [Profile]
@@ -658,13 +660,13 @@ struct AddTaskView: View {
 
                     Spacer()
 
-                    Text("New Task")
+                    Text(editingTask != nil ? "Edit Task" : "New Task")
                         .font(Tokens.Typography.h3)
                         .foregroundColor(Color.appTextPrimary)
 
                     Spacer()
 
-                    Button("Add") { save() }
+                    Button(editingTask != nil ? "Save" : "Add") { save() }
                         .buttonStyle(.borderedProminent)
                         .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
                         .keyboardShortcut(.defaultAction)
@@ -860,30 +862,71 @@ struct AddTaskView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .onAppear { assignedToProfileID = activeProfile?.clientID }
+            .onAppear {
+                if let task = editingTask {
+                    title              = task.title
+                    notes              = task.notes
+                    frictionLevel      = task.frictionLevel
+                    interestLevel      = task.interestLevel
+                    energyRequired     = task.energyRequired
+                    estimatedMinutes   = task.estimatedMinutes
+                    contextTag         = task.contextTag
+                    waitingOn          = task.waitingOn
+                    hyperfocusRisk     = task.hyperfocusRisk
+                    needsBodyDouble    = task.needsBodyDouble
+                    priority           = task.priority
+                    assignedToProfileID = task.assignedToProfileID
+                    if let due = task.dueDate {
+                        dueDate = due
+                        showDueDatePicker = true
+                    }
+                } else {
+                    assignedToProfileID = activeProfile?.clientID
+                }
+            }
         }
     }
 
     private func save() {
-        let task = AgendaTask(
-            title: title.trimmingCharacters(in: .whitespaces),
-            frictionLevel: frictionLevel,
-            energyRequired: energyRequired,
-            estimatedMinutes: estimatedMinutes,
-            contextTag: contextTag,
-            priority: priority,
-            interestLevel: interestLevel
-        )
-        task.notes = notes
-        task.hyperfocusRisk = hyperfocusRisk
-        task.needsBodyDouble = needsBodyDouble
-        task.waitingOn = waitingOn
-        if showDueDatePicker { task.dueDate = dueDate }
-        task.assignedToProfileID = assignedToProfileID
-        if assignedToProfileID != activeProfile?.clientID {
-            task.assignedByProfileID = activeProfile?.clientID
+        if let task = editingTask {
+            task.title            = title.trimmingCharacters(in: .whitespaces)
+            task.notes            = notes
+            task.frictionLevel    = frictionLevel
+            task.energyRequired   = energyRequired
+            task.estimatedMinutes = estimatedMinutes
+            task.contextTag       = contextTag
+            task.priority         = priority
+            task.interestLevel    = interestLevel
+            task.hyperfocusRisk   = hyperfocusRisk
+            task.needsBodyDouble  = needsBodyDouble
+            task.waitingOn        = waitingOn
+            task.dueDate          = showDueDatePicker ? dueDate : nil
+            task.assignedToProfileID = assignedToProfileID
+            if assignedToProfileID != activeProfile?.clientID {
+                task.assignedByProfileID = activeProfile?.clientID
+            }
+            task.updatedAt = .now
+        } else {
+            let task = AgendaTask(
+                title: title.trimmingCharacters(in: .whitespaces),
+                frictionLevel: frictionLevel,
+                energyRequired: energyRequired,
+                estimatedMinutes: estimatedMinutes,
+                contextTag: contextTag,
+                priority: priority,
+                interestLevel: interestLevel
+            )
+            task.notes = notes
+            task.hyperfocusRisk = hyperfocusRisk
+            task.needsBodyDouble = needsBodyDouble
+            task.waitingOn = waitingOn
+            if showDueDatePicker { task.dueDate = dueDate }
+            task.assignedToProfileID = assignedToProfileID
+            if assignedToProfileID != activeProfile?.clientID {
+                task.assignedByProfileID = activeProfile?.clientID
+            }
+            modelContext.insert(task)
         }
-        modelContext.insert(task)
         try? modelContext.save()
         isPresented = false
     }

@@ -27,22 +27,28 @@ private let cloudKitContainerID = "iCloud.com.augenda.AuGenda"   // ⚠️ place
 
 enum AppContainer {
 
+    /// Shared schema — keep in sync across every container variant below.
+    private static let schemaModels: [any PersistentModel.Type] = [
+        AgendaItem.self,
+        SubTask.self,
+        AgendaTask.self,
+        TaskStep.self,
+        UserPreferences.self,
+        Block.self,
+        BlockTask.self,
+        BundleTemplate.self,
+        BundleTemplateItem.self,
+        AttachedBundle.self,
+        AttachedBundleItem.self,
+        Profile.self,
+        ProfilePreferences.self
+    ]
+
+    /// Production container — file-backed + CloudKit private database.
+    /// Use this once the real CloudKit container ID is wired in (see the
+    /// big comment block on `cloudKitContainerID` above).
     static var production: ModelContainer = {
-        let schema = Schema([
-            AgendaItem.self,
-            SubTask.self,
-            AgendaTask.self,
-            TaskStep.self,
-            UserPreferences.self,
-            Block.self,
-            BlockTask.self,
-            BundleTemplate.self,
-            BundleTemplateItem.self,
-            AttachedBundle.self,
-            AttachedBundleItem.self,
-            Profile.self,
-            ProfilePreferences.self
-        ])
+        let schema = Schema(schemaModels)
 
         let config = ModelConfiguration(
             schema: schema,
@@ -57,22 +63,34 @@ enum AppContainer {
         }
     }()
 
+    /// Dev container — file-backed (persistent across launches) but with
+    /// NO CloudKit binding. Use this while the production CloudKit
+    /// container ID is still a placeholder; lets fresh installs actually
+    /// boot empty (so the first-launch flow fires) without depending on
+    /// a CloudKit container that doesn't exist yet.
+    ///
+    /// Flip to `.production` in `AuGendaApp.swift` once CloudKit is real.
+    static var dev: ModelContainer = {
+        let schema = Schema(schemaModels)
+
+        let config = ModelConfiguration(
+            schema: schema,
+            isStoredInMemoryOnly: false
+            // No cloudKitDatabase — local-only.
+        )
+
+        do {
+            return try ModelContainer(for: schema, configurations: [config])
+        } catch {
+            // Last resort — fall back to in-memory rather than crashing,
+            // so the app still launches in some form if persistent setup
+            // fails for any reason (corrupt store, schema mismatch, etc.).
+            return Self.makeTestContainer()
+        }
+    }()
+
     static func makeTestContainer() -> ModelContainer {
-        let schema = Schema([
-            AgendaItem.self,
-            SubTask.self,
-            AgendaTask.self,
-            TaskStep.self,
-            UserPreferences.self,
-            Block.self,
-            BlockTask.self,
-            BundleTemplate.self,
-            BundleTemplateItem.self,
-            AttachedBundle.self,
-            AttachedBundleItem.self,
-            Profile.self,
-            ProfilePreferences.self
-        ])
+        let schema = Schema(schemaModels)
 
         let config = ModelConfiguration(
             schema: schema,
