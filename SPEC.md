@@ -1,17 +1,76 @@
 # AuGenda — Feature Spec
 
-> Scope: the AI-enrichment layer, the six-axis difficulty model, configurable
-> capacity check-ins, and the Gemini OAuth login path. Living document — keep
-> in sync with the code as these areas evolve.
+> Scope: the beta launch spec — capture→inbox→review pipeline, AI-enrichment
+> layer, six-axis difficulty model, configurable capacity check-ins, and the
+> Gemini OAuth login path. Living document — keep in sync with the code.
 >
-> Last updated: 2026-06-04
+> Last updated: 2026-06-06
 
 AuGenda is an iOS/macOS agenda app for AuDHD brains. Everything below is built
 around the same posture: **calm, glanceable, opt-in, no demands, no surprises.**
 
 ---
 
-## 1. Task editing
+## 1. Brain dump → Inbox pipeline
+
+### 1.1 Overview
+
+The core capture loop: brain dump → inbox (unprocessed) → mandatory review →
+AgendaTask. Nothing auto-files. The user always confirms.
+
+### 1.2 Capture (`BrainDumpView`)
+
+- **Entry points:** pencil button in the HomeDashboard toolbar; existing "Brain
+  dump" button in the TaskBacklogView.
+- **Input:** multi-line TextEditor (one thought per line). Each line becomes
+  one `InboxItem`.
+- **Voice (iOS):** "Dictate" button uses `SFSpeechRecognizer` with
+  `requiresOnDeviceRecognition = true` — audio never leaves the device. Appends
+  transcribed text to the editor as a new line on completion. Degrades silently
+  if the user denies speech permission.
+- **Submit:** "Send to inbox" → each non-empty line creates an `InboxItem`
+  with `state = .unprocessed`. Nothing becomes a task yet.
+
+### 1.3 Inbox banner (HomeDashboard)
+
+- `InboxReadyBanner` appears above the Primary Action Zone when there are
+  unprocessed items and density is not `.survival` (survival mode shows nothing
+  extra).
+- Badge dot on the brain dump toolbar button when the inbox is non-empty.
+- Tapping the banner opens `InboxView` as a sheet.
+
+### 1.4 Review (`InboxView` + `InboxItemReviewSheet`)
+
+- `InboxView` lists all `.unprocessed` items with timestamps and source icons.
+- Tapping an item opens `InboxItemReviewSheet`.
+- **Fields:** title (pre-filled from AI suggestion or raw capture), friction,
+  energy, initiation cost, context tag. Difficulty band preview computed live.
+- **AI enrichment:** if AI is enabled and a provider is set, "Suggest structure"
+  sends the raw capture text to the active provider and fills in the fields for
+  review. User sees every suggestion before it's applied.
+- **Confirm:** "Add to tasks" creates an `AgendaTask` from the reviewed fields,
+  sets `InboxItem.state = .organized`, links via `resolvedTaskID`.
+- **Discard:** "Discard" sets `state = .archived` — item is gone from the review
+  queue.
+- Swipe-to-delete on the list also archives.
+
+### 1.5 `InboxItem` model
+
+Stored in SwiftData; CloudKit-compatible (all properties have defaults or are optional).
+
+| Field | Type | Notes |
+|---|---|---|
+| `clientID` | UUID | identity |
+| `rawCapture` | String | verbatim capture text |
+| `sourceRaw` | String | `textCapture` or `voiceCapture` |
+| `stateRaw` | String | `unprocessed`, `organized`, `archived` |
+| `aiSuggested*` | Int?/String? | AI-filled per-field, stored for re-entry |
+| `resolvedTaskID` | UUID? | set when organized → AgendaTask |
+| `assignedToProfileID` | UUID? | inherited from active profile at capture time |
+
+---
+
+## 2. Task editing
 
 Existing tasks are fully editable — not just brain-dump → refine, but any field
 at any time.

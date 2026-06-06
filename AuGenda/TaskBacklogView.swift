@@ -10,6 +10,10 @@
 
 import SwiftUI
 import SwiftData
+#if os(iOS)
+import Speech
+import AVFoundation
+#endif
 import UniformTypeIdentifiers
 
 // MARK: - Filter & Sort Mode
@@ -950,7 +954,16 @@ struct BrainDumpView: View {
     @State private var text: String = ""
     @FocusState private var editorFocused: Bool
 
-    /// Non-empty, trimmed lines — each becomes one task.
+    #if os(iOS)
+    @State private var isRecording: Bool = false
+    @State private var voiceUnavailable: Bool = false
+    @State private var audioEngine = AVAudioEngine()
+    @State private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    @State private var recognitionTask: SFSpeechRecognitionTask?
+    private let speechRecognizer = SFSpeechRecognizer(locale: Locale.autoupdatingCurrent)
+    #endif
+
+    /// Non-empty, trimmed lines — each becomes one InboxItem.
     private var lines: [String] {
         text
             .split(separator: "\n", omittingEmptySubsequences: true)
@@ -971,13 +984,15 @@ struct BrainDumpView: View {
             VStack(spacing: 0) {
 
                 // ── Sticky top action bar ────────────────────────
-                // Same pattern as AddTaskView's sticky bar so Cancel + Add
-                // are always reachable even when the keyboard takes the
-                // bottom of the screen.
                 HStack(spacing: Tokens.Spacing.base) {
-                    Button("Cancel") { isPresented = false }
-                        .buttonStyle(.bordered)
-                        .keyboardShortcut(.cancelAction)
+                    Button("Cancel") {
+                        #if os(iOS)
+                        stopRecording()
+                        #endif
+                        isPresented = false
+                    }
+                    .buttonStyle(.bordered)
+                    .keyboardShortcut(.cancelAction)
 
                     Spacer()
 
@@ -992,7 +1007,7 @@ struct BrainDumpView: View {
 
                     Spacer()
 
-                    Button("Add all") { saveAll() }
+                    Button("Send to inbox") { sendToInbox() }
                         .buttonStyle(.borderedProminent)
                         .disabled(lines.isEmpty)
                         .keyboardShortcut(.defaultAction)
@@ -1002,9 +1017,7 @@ struct BrainDumpView: View {
                 .background(Color.appBackgroundSecondary)
 
                 // ── Reassurance copy ─────────────────────────────
-                // ND-friendly framing: explicit permission to skip the
-                // detail. Keeps the executive load to "type, save."
-                Text("One thought per line. Skip the detail — friction, energy, time, context all get sensible defaults. Refine later, or never.")
+                Text("One thought per line. Lands in the inbox for review — nothing goes to tasks until you confirm it.")
                     .font(Tokens.Typography.caption)
                     .foregroundColor(Color.appTextSecondary)
                     .multilineTextAlignment(.leading)
@@ -1022,39 +1035,147 @@ struct BrainDumpView: View {
                     .padding(.horizontal, Tokens.Spacing.sm)
                     .background(Color.appBackground)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                // ── Voice dictation bar (iOS only) ────────────────
+                #if os(iOS)
+                if !voiceUnavailable {
+                    Divider()
+                    HStack {
+                        Button {
+                            isRecording ? stopRecording() : startRecording()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: isRecording
+                                      ? "stop.circle.fill" : "mic.circle.fill")
+                                    .font(.title3)
+                                    .foregroundStyle(isRecording ? .red : Color.appAccent)
+                                Text(isRecording ? "Stop dictating" : "Dictate")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(isRecording ? .red : Color.appAccent)
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(
+                                isRecording
+                                    ? Color.red.opacity(0.08)
+                                    : Color.appAccent.opacity(0.10),
+                                in: Capsule()
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .animation(.easeInOut(duration: 0.2), value: isRecording)
+                        Spacer()
+                    }
+                    .padding(.horizontal, Tokens.Spacing.base)
+                    .padding(.vertical, Tokens.Spacing.sm)
+                    .background(Color.appBackgroundSecondary)
+                }
+                #endif
             }
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .onAppear {
-                // Focus the editor immediately — capture before the thought
-                // evaporates is the whole point of the surface.
                 editorFocused = true
+                #if os(iOS)
+                requestSpeechPermission()
+                #endif
+            }
+            .onDisappear {
+                #if os(iOS)
+                stopRecording()
+                #endif
             }
         }
     }
 
-    private func saveAll() {
+    // MARK: - Send to inbox
+
+    private func sendToInbox() {
         let profileID = profileManager.activeProfile?.clientID
         let allLines = lines
         guard !allLines.isEmpty else { return }
 
-        // Insert in reverse sortOrder so the first-typed line ends up at
-        // the top of the backlog when sorted ascending — matches what the
-        // user expects ("the thing I typed first is the thing I dumped first").
-        for (offset, title) in allLines.enumerated() {
-            let task = AgendaTask(
-                title: title,
-                frictionLevel: 3,
-                energyRequired: 2,
-                estimatedMinutes: 15,
-                interestLevel: 3
-            )
-            task.assignedToProfileID = profileID
-            task.sortOrder = offset
-            modelContext.insert(task)
+        #if os(iOS)
+        let source: InboxItemSource = isRecording ? .voiceCapture : .textCapture
+        stopRecording()
+        #else
+        let source: InboxItemSource = .textCapture
+        #endif
+
+        for line in allLines {
+            let item = InboxItem(rawCapture: line, source: source)
+            item.assignedToProfileID = profileID
+            modelContext.insert(item)
         }
         try? modelContext.save()
         isPresented = false
     }
+
+    // MARK: - Speech recognition (iOS only)
+
+    #if os(iOS)
+    private func requestSpeechPermission() {
+        SFSpeechRecognizer.requestAuthorization { status in
+            DispatchQueue.main.async {
+                voiceUnavailable = (status != .authorized)
+            }
+        }
+    }
+
+    private func startRecording() {
+        guard !isRecording else { return }
+
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.requiresOnDeviceRecognition = true
+        request.shouldReportPartialResults = true
+        recognitionRequest = request
+
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+
+            let node = audioEngine.inputNode
+            let format = node.outputFormat(forBus: 0)
+            node.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+                request.append(buffer)
+            }
+            audioEngine.prepare()
+            try audioEngine.start()
+
+            let baseline = text
+            recognitionTask = speechRecognizer?.recognitionTask(with: request) { result, error in
+                if let result {
+                    DispatchQueue.main.async {
+                        let prefix = baseline.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let transcription = result.bestTranscription.formattedString
+                        text = prefix.isEmpty ? transcription : prefix + "\n" + transcription
+                    }
+                }
+                if error != nil || result?.isFinal == true {
+                    DispatchQueue.main.async { stopRecording() }
+                }
+            }
+            isRecording = true
+        } catch {
+            voiceUnavailable = true
+            stopRecording()
+        }
+    }
+
+    private func stopRecording() {
+        guard isRecording else { return }
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
+        recognitionRequest?.endAudio()
+        recognitionTask?.cancel()
+        recognitionRequest = nil
+        recognitionTask = nil
+        isRecording = false
+        try? AVAudioSession.sharedInstance().setActive(false,
+            options: .notifyOthersOnDeactivation)
+    }
+    #endif
 }

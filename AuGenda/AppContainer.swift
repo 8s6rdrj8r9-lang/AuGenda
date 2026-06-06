@@ -33,6 +33,7 @@ enum AppContainer {
         SubTask.self,
         AgendaTask.self,
         TaskStep.self,
+        InboxItem.self,
         UserPreferences.self,
         Block.self,
         BlockTask.self,
@@ -204,6 +205,17 @@ enum SampleData {
                 interestLevel: interest
             )
             context.insert(task)
+        }
+
+        // Sample inbox items — unprocessed brain dumps
+        let inboxCaptures: [(String, InboxItemSource)] = [
+            ("Need to call the pharmacy about the prescription refill — they said call back after 2pm", .textCapture),
+            ("idea for the balcony: get one of those folding tables so we can eat outside when the weather is good", .voiceCapture),
+            ("check if dentist appointment is this thursday or next", .textCapture)
+        ]
+        for (capture, source) in inboxCaptures {
+            let item = InboxItem(rawCapture: capture, source: source)
+            context.insert(item)
         }
     }
 }

@@ -85,6 +85,14 @@ struct HomeDashboardView: View {
     @State private var showEnergyCheck: Bool = false
     @State private var showDensityPicker: Bool = false
     @State private var showAddAgendaItem: Bool = false
+    @State private var showBrainDump: Bool = false
+    @State private var showInbox: Bool = false
+
+    @Query(
+        filter: #Predicate<InboxItem> { $0.stateRaw == "unprocessed" },
+        sort: \InboxItem.createdAt
+    )
+    private var unprocessedInboxItems: [InboxItem]
 
     // MARK: - Derived
 
@@ -253,6 +261,16 @@ struct HomeDashboardView: View {
                         .transition(.opacity.combined(with: .move(edge: .top)))
                     }
 
+                    // Inbox ready banner — shown when brain dumps need review,
+                    // suppressed in survival mode to avoid adding noise.
+                    if !unprocessedInboxItems.isEmpty && density != .survival {
+                        InboxReadyBanner(count: unprocessedInboxItems.count) {
+                            showInbox = true
+                        }
+                        .padding(.horizontal, Tokens.Spacing.base)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+
                     PrimaryActionZone(
                         content: primaryContent,
                         onOpenItem: { selectedItem = $0 },
@@ -288,6 +306,33 @@ struct HomeDashboardView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
             #endif
+            .toolbar {
+                ToolbarItem(placement: {
+                    #if os(iOS)
+                    return .navigationBarTrailing
+                    #else
+                    return .primaryAction
+                    #endif
+                }()) {
+                    Button {
+                        showBrainDump = true
+                    } label: {
+                        ZStack(alignment: .topTrailing) {
+                            Image(systemName: "square.and.pencil")
+                                .foregroundStyle(Color.appAccent)
+                            if !unprocessedInboxItems.isEmpty {
+                                Circle()
+                                    .fill(Color.appAccent)
+                                    .frame(width: 8, height: 8)
+                                    .offset(x: 3, y: -3)
+                            }
+                        }
+                    }
+                    .accessibilityLabel(unprocessedInboxItems.isEmpty
+                        ? "Brain dump"
+                        : "Brain dump — \(unprocessedInboxItems.count) in inbox")
+                }
+            }
             .environment(\.densityMode, density)
             .background(Color.appBackground)
             .overlay(alignment: .top) {
@@ -349,6 +394,20 @@ struct HomeDashboardView: View {
             }
             .sheet(isPresented: $showAddAgendaItem) {
                 AddAgendaItemView(isPresented: $showAddAgendaItem)
+                    #if os(iOS)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                    #endif
+            }
+            .sheet(isPresented: $showBrainDump) {
+                BrainDumpView(isPresented: $showBrainDump)
+                    #if os(iOS)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                    #endif
+            }
+            .sheet(isPresented: $showInbox) {
+                InboxView()
                     #if os(iOS)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
@@ -619,6 +678,53 @@ private struct OrientationAnchor: View {
         case 17..<22: return "Evening"
         default:      return "Late"
         }
+    }
+}
+
+
+// MARK: - Inbox Ready Banner
+//
+// Shown above the Primary Action Zone when brain-dump captures are
+// awaiting review. Tapping opens the Inbox review sheet. Suppressed
+// in survival mode — nothing extra in an already-reduced surface.
+
+private struct InboxReadyBanner: View {
+    let count: Int
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 12) {
+                Image(systemName: "tray.full.fill")
+                    .font(.headline)
+                    .foregroundStyle(Color.appAccent)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Inbox: \(count) \(count == 1 ? "capture" : "captures") to review")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.primary)
+                    Text("Tap to review and add to tasks")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(14)
+            .background(Color.appAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(Color.appAccent.opacity(0.18), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(count) inbox \(count == 1 ? "item" : "items") ready to review")
+        .accessibilityHint("Opens inbox to review and add brain dumps to tasks")
     }
 }
 

@@ -13,6 +13,13 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>AuGenda checks the weather for your outdoor routine blocks so it can suggest what to grab — a coat, sunscreen, umbrella. Location stays on your device and is only sent to Apple's WeatherKit. AuGenda never shares your location with anyone else.</string>
 
+	<!-- Brain dump voice capture — on-device only, audio never leaves the device -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>AuGenda uses the microphone to let you dictate brain dumps. Audio is processed on your device using Apple's on-device speech recognition — nothing is sent to any server.</string>
+
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>AuGenda transcribes voice brain dumps using on-device speech recognition. No audio or text leaves your device.</string>
+
 	<!-- Launch screen — solid dark color matching the dashboard's actual
 	     appBackground in dark mode (slate900 / #0F172A). Without this iOS
 	     defaults to a white launch screen and users see a brief light flash

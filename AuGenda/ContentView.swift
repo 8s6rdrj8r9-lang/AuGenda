@@ -937,6 +937,7 @@ struct SettingsView: View {
         //    of children, but we list parents explicitly for clarity.
         try? modelContext.delete(model: AgendaItem.self)
         try? modelContext.delete(model: AgendaTask.self)
+        try? modelContext.delete(model: InboxItem.self)
         try? modelContext.delete(model: SubTask.self)
         try? modelContext.delete(model: TaskStep.self)
         try? modelContext.delete(model: Block.self)
