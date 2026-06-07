@@ -572,6 +572,19 @@ struct AgendaTaskCard: View {
             .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusMedium))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(taskAccessibilityLabel)
+        .accessibilityHint("Opens task detail")
+    }
+
+    /// One cognitive-meaning VoiceOver sentence, reusing the shared summary so
+    /// the backlog reads consistently with the Home cards. Adds waiting-on when
+    /// the Waiting filter is showing it.
+    private var taskAccessibilityLabel: String {
+        var summary = TaskSurfaceData(from: task).accessibilitySummary
+        if showWaitingOn && !task.waitingOn.isEmpty {
+            summary += ", waiting on \(task.waitingOn)"
+        }
+        return summary
     }
 
     private var priorityColor: Color {

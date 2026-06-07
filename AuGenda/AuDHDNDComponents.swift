@@ -1292,6 +1292,8 @@ struct MomentumTaskCard: View {
             .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusMedium))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(surface.accessibilitySummary)
+        .accessibilityHint("Opens this task")
     }
 
     private var priorityColor: Color {
@@ -1337,34 +1339,43 @@ struct RecoveryContextCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.lg) {
 
-            // Header
-            HStack(spacing: Tokens.Spacing.sm) {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(Tokens.Color.info)
-                Text("You were here \(gapDescription) ago")
-                    .font(Tokens.Typography.label)
-                    .foregroundColor(Color.appTextSecondary)
-            }
+            // Orientation block — combined into one VoiceOver element so a
+            // returning user hears "You were here 20 minutes ago, on Call
+            // pharmacy, phone" as one re-orienting sentence, then the three
+            // action buttons separately. Marked a header for quick jump-to.
+            VStack(alignment: .leading, spacing: Tokens.Spacing.lg) {
+                // Header
+                HStack(spacing: Tokens.Spacing.sm) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(Tokens.Color.info)
+                        .accessibilityHidden(true)
+                    Text("You were here \(gapDescription) ago")
+                        .font(Tokens.Typography.label)
+                        .foregroundColor(Color.appTextSecondary)
+                }
 
-            // Last context — the user needs to recognise this
-            if let title = lastItemTitle, !title.isEmpty {
-                VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
-                    Text(title)
+                // Last context — the user needs to recognise this
+                if let title = lastItemTitle, !title.isEmpty {
+                    VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+                        Text(title)
+                            .font(Tokens.Typography.h2)
+                            .foregroundColor(Color.appTextPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let ctx = lastContextLabel, !ctx.isEmpty {
+                            Text(ctx.capitalized)
+                                .font(Tokens.Typography.caption)
+                                .foregroundColor(Color.appTextSecondary)
+                        }
+                    }
+                } else {
+                    Text("Welcome back")
                         .font(Tokens.Typography.h2)
                         .foregroundColor(Color.appTextPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let ctx = lastContextLabel, !ctx.isEmpty {
-                        Text(ctx.capitalized)
-                            .font(Tokens.Typography.caption)
-                            .foregroundColor(Color.appTextSecondary)
-                    }
                 }
-            } else {
-                Text("Welcome back")
-                    .font(Tokens.Typography.h2)
-                    .foregroundColor(Color.appTextPrimary)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
 
             // Three equal-weight choices
             VStack(spacing: Tokens.Spacing.sm) {
