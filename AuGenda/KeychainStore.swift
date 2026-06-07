@@ -9,9 +9,12 @@
 //   * Per-device: a new device requires re-entering each key. We accept
 //     this friction in exchange for the safety guarantee that no key is
 //     ever pushed up to Apple's iCloud servers.
-//   * Accessibility: kSecAttrAccessibleAfterFirstUnlock — readable while
-//     device is locked after first unlock, so background auto-enrich can
-//     still run while screen is off.
+//   * Accessibility: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly —
+//     readable while the device is locked after first unlock (so background
+//     auto-enrich still runs with the screen off), but the ThisDeviceOnly
+//     suffix is load-bearing: it keeps the key OUT of encrypted iCloud
+//     device backups and off iCloud Keychain, which is what actually backs
+//     the "never leaves this device" guarantee above.
 //
 // Usage:
 //   try KeychainStore.set("sk-...", for: .claude)
@@ -79,7 +82,7 @@ enum KeychainStore {
         ]
         let attrsUpdate: [String: Any] = [
             kSecValueData as String:    data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         ]
         let updateStatus = SecItemUpdate(queryUpdate as CFDictionary, attrsUpdate as CFDictionary)
 
@@ -93,7 +96,7 @@ enum KeychainStore {
                 kSecAttrService as String:  service,
                 kSecAttrAccount as String:  provider.rawValue,
                 kSecValueData as String:    data,
-                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             ]
             let addStatus = SecItemAdd(queryAdd as CFDictionary, nil)
             guard addStatus == errSecSuccess else {

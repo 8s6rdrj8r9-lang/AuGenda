@@ -913,7 +913,7 @@ struct SettingsView: View {
                 Button("Erase everything", role: .destructive) { eraseAllData() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This permanently deletes every task, block, profile, and preference on this device. iCloud copies sync back unless you also remove the AuGenda iCloud container in System Settings. This cannot be undone.")
+                Text("This permanently deletes every task, block, profile, and preference on this device — plus your saved AI API keys, any Google sign-in, and your AI personalization profile. iCloud copies sync back unless you also remove the AuGenda iCloud container in System Settings. This cannot be undone.")
             }
             .sheet(isPresented: $showAddProfile) {
                 ProfileSetupView(isPresented: $showAddProfile)
@@ -927,11 +927,13 @@ struct SettingsView: View {
 
     // MARK: - Erase
 
-    /// Wipes every SwiftData entity on this device + every UserDefaults key
-    /// the app reads or writes, then re-seeds a fresh default profile so the
-    /// app boots cleanly. iCloud copies are NOT touched (CloudKit deletion
-    /// requires a per-record loop the user would have to confirm; for now
-    /// the footer copy instructs them to use System Settings).
+    /// Wipes every SwiftData entity on this device, every secret in the
+    /// Keychain (API keys + OAuth tokens), the AI personalization profile
+    /// and usage ledger, and every UserDefaults key the app reads or writes,
+    /// then re-seeds a fresh default profile so the app boots cleanly.
+    /// iCloud copies are NOT touched (CloudKit deletion requires a per-record
+    /// loop the user would have to confirm; the footer copy instructs them to
+    /// use System Settings).
     private func eraseAllData() {
         // 1. Delete SwiftData entities. @Relationship cascade rules take care
         //    of children, but we list parents explicitly for clarity.
@@ -951,7 +953,19 @@ struct SettingsView: View {
         try? modelContext.delete(model: UserPreferences.self)
         try? modelContext.save()
 
-        // 2. Clear every UserDefaults key we use.
+        // 2. Wipe every secret + AI-derived artefact. "Erase all data" must
+        //    leave no credentials or personal profile behind — these never
+        //    lived in SwiftData, so step 1 doesn't reach them.
+        for provider in AIProvider.allCases {
+            try? KeychainStore.remove(for: provider)   // API keys
+            OAuthCoordinator.shared.signOut(provider: provider)  // OAuth tokens
+        }
+        // about-me, tone, interest opt-in, and the on-disk memory JSON
+        PersonalizationStore.shared.resetAll()
+        // spend history (ai-usage-ledger.json in Application Support)
+        AIUsageLedger.shared.clear()
+
+        // 3. Clear every UserDefaults key we use — including AI config.
         let defaults = UserDefaults.standard
         for key in [
             "activity.snoozes", "activity.completions",
@@ -961,12 +975,16 @@ struct SettingsView: View {
             "density.advisor.dismissedUntilTS",
             "home.dashboard.useNewHome",
             "home.dashboard.density.pinned",
-            "activeProfileID"
+            "activeProfileID",
+            // AI enrichment config (keys/tokens handled in step 2 above)
+            "ai.enabled", "ai.activeProvider", "ai.autoEnrichNewTasks",
+            "ai.showEnrichButtons",
+            "ai.ollama.host", "ai.ollama.model"
         ] {
             defaults.removeObject(forKey: key)
         }
 
-        // 3. Reset the in-memory active-profile pointer and re-seed defaults.
+        // 4. Reset the in-memory active-profile pointer and re-seed defaults.
         profileManager.activeProfile = nil
         profileManager.seedDefaultsIfNeeded()
     }

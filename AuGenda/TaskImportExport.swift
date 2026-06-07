@@ -504,14 +504,18 @@ enum TaskImporter {
     // MARK: Shared dict → AgendaTask
 
     private static func buildTask(from dict: [String: String], title: String) -> AgendaTask {
+        // Clamp to the model's documented ranges so foreign / hand-edited
+        // YAML, CSV, or Markdown can't store out-of-range values. Mirrors the
+        // JSON path's `ExportedTask.toAgendaTask()` contract (single source of
+        // truth for the valid ranges).
         let task = AgendaTask(
             title: title,
-            frictionLevel: Int(dict["frictionLevel"] ?? "") ?? 3,
-            energyRequired: Int(dict["energyRequired"] ?? "") ?? 2,
-            estimatedMinutes: Int(dict["estimatedMinutes"] ?? "") ?? 15,
+            frictionLevel: (Int(dict["frictionLevel"] ?? "") ?? 3).clamped(to: 1...5),
+            energyRequired: (Int(dict["energyRequired"] ?? "") ?? 2).clamped(to: 1...3),
+            estimatedMinutes: max(1, Int(dict["estimatedMinutes"] ?? "") ?? 15),
             contextTag: dict["contextTag"] ?? "",
-            priority: Int(dict["priority"] ?? "") ?? 0,
-            interestLevel: Int(dict["interestLevel"] ?? "") ?? 3
+            priority: (Int(dict["priority"] ?? "") ?? 0).clamped(to: 0...2),
+            interestLevel: (Int(dict["interestLevel"] ?? "") ?? 3).clamped(to: 1...5)
         )
         task.notes           = dict["notes"] ?? ""
         task.hyperfocusRisk  = (dict["hyperfocusRisk"]  ?? "false").lowercased() == "true"

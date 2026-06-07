@@ -32,9 +32,6 @@ struct AIEnrichmentSettingsView: View {
     // once AI is enabled — gives the user manual triggers without auto.
     @AppStorage("ai.showEnrichButtons") private var showEnrichButtons: Bool = true
 
-    // Soft cap (USD per month) — surfaces a banner, doesn't hard-stop.
-    @AppStorage("ai.softCapUSD") private var softCapUSD: Double = 5.0
-
     // Ollama-specific config (only used if Ollama is the active provider).
     @AppStorage("ai.ollama.host")  private var ollamaHost: String = "http://localhost:11434"
     @AppStorage("ai.ollama.model") private var ollamaModel: String = "llama3.1:8b"
@@ -373,14 +370,6 @@ struct AIEnrichmentSettingsView: View {
                 Spacer()
                 Text(String(format: "$%.4f", ledger.thisMonthCostUSD))
                     .foregroundStyle(.secondary).monospacedDigit()
-            }
-            HStack {
-                Text("Soft cap warning")
-                Spacer()
-                Stepper(value: $softCapUSD, in: 0.5...50, step: 0.5) {
-                    Text(String(format: "$%.1f/mo", softCapUSD))
-                        .foregroundStyle(.secondary)
-                }
             }
             Button(role: .destructive) {
                 ledger.clear()

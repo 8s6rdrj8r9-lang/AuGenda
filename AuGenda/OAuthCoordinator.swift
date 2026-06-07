@@ -11,6 +11,9 @@
 // Token storage:
 //   * Access + refresh tokens → Keychain, per-provider (separate
 //     entries from API keys; an "oauth-{provider}" account name).
+//     Written with kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly so the
+//     long-lived refresh token never rides along in an encrypted iCloud
+//     device backup or iCloud Keychain — it stays on this device only.
 //   * Expiry stored in @AppStorage as a Date so we know when to refresh
 //     without unwrapping the JWT.
 //
@@ -135,7 +138,7 @@ final class OAuthCoordinator: NSObject, ObservableObject {
         ]
         let attrs: [String: Any] = [
             kSecValueData as String:    data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         ]
         if SecItemUpdate(queryBase as CFDictionary, attrs as CFDictionary) == errSecSuccess {
             return
