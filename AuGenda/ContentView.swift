@@ -129,6 +129,11 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .agendaItemSnoozed)) { note in
             handleSnoozeAction(note.userInfo)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .selectTab)) { note in
+            guard let index = note.userInfo?["index"] as? Int else { return }
+            let tabs: [AppTab] = [.today, .blocks, .tasks, .focus, .settings]
+            if tabs.indices.contains(index) { selectedTab = tabs[index] }
+        }
     }
 
     // MARK: - Launch setup

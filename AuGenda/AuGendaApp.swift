@@ -20,6 +20,15 @@ struct AuGendaApp: App {
 
     @Environment(\.scenePhase) private var scenePhase
 
+    /// Bridge a macOS menu command to the TabView's selection. Posts a
+    /// notification ContentView observes — keeps tab state owned by the view
+    /// while giving the menu bar real ⌘1–⌘5 navigation.
+    private static func selectTab(_ index: Int) {
+        NotificationCenter.default.post(
+            name: .selectTab, object: nil, userInfo: ["index": index]
+        )
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -34,6 +43,18 @@ struct AuGendaApp: App {
                 #if canImport(WatchConnectivity)
                 .environmentObject(watchManager)
                 #endif
+        }
+        // macOS-first-class keyboard navigation: a real menu-bar "Go" menu
+        // with ⌘1–⌘5. On iPhone these are inert; on iPad/Mac they're live and
+        // discoverable. Tab switching is routed through ContentView via .selectTab.
+        .commands {
+            CommandMenu("Go") {
+                Button("Home")     { Self.selectTab(0) }.keyboardShortcut("1", modifiers: .command)
+                Button("Blocks")   { Self.selectTab(1) }.keyboardShortcut("2", modifiers: .command)
+                Button("Tasks")    { Self.selectTab(2) }.keyboardShortcut("3", modifiers: .command)
+                Button("Focus")    { Self.selectTab(3) }.keyboardShortcut("4", modifiers: .command)
+                Button("Settings") { Self.selectTab(4) }.keyboardShortcut("5", modifiers: .command)
+            }
         }
         .onChange(of: scenePhase) { _, newPhase in
             #if canImport(WatchConnectivity)

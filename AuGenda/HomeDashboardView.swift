@@ -331,6 +331,7 @@ struct HomeDashboardView: View {
                     .accessibilityLabel(unprocessedInboxItems.isEmpty
                         ? "Brain dump"
                         : "Brain dump — \(unprocessedInboxItems.count) in inbox")
+                    .keyboardShortcut("n", modifiers: .command)   // ⌘N — new capture (macOS/iPad)
                 }
             }
             .environment(\.densityMode, density)

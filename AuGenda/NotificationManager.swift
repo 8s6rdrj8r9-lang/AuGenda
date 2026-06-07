@@ -537,4 +537,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 extension Notification.Name {
     static let agendaItemCompleted = Notification.Name("agendaItemCompleted")
     static let agendaItemSnoozed = Notification.Name("agendaItemSnoozed")
+    /// Posted by the macOS "Go" menu commands (⌘1–⌘5) to switch tabs.
+    /// userInfo["index"] is the 0-based tab index. Observed by ContentView.
+    static let selectTab = Notification.Name("selectTab")
 }
