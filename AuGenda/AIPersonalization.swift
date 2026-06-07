@@ -217,6 +217,8 @@ final class PersonalizationStore: ObservableObject {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(memory) else { return }
-        try? data.write(to: url, options: .atomic)
+        // Recent task titles are personal — protect at rest (readable after first
+        // unlock so background enrichment can still append). See audit P1.
+        try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 }

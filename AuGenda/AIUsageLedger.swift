@@ -59,7 +59,20 @@ final class AIUsageLedger: ObservableObject {
             timestamp:          .now
         )
         entries.append(entry)
+        pruneOldEntries()
         save()
+    }
+
+    /// Bound growth: keep ~90 days (the aggregates only read the current month)
+    /// plus a hard count cap against pathological burst usage. Entries are
+    /// appended chronologically, so removeFirst() drops the oldest.
+    private func pruneOldEntries() {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -90, to: .now) ?? .distantPast
+        entries.removeAll { $0.timestamp < cutoff }
+        let maxEntries = 1000
+        if entries.count > maxEntries {
+            entries.removeFirst(entries.count - maxEntries)
+        }
     }
 
     func clear() {
@@ -146,6 +159,8 @@ final class AIUsageLedger: ObservableObject {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(entries) else { return }
-        try? data.write(to: url, options: .atomic)
+        // Protect at rest: unreadable until first unlock after boot (mirrors the
+        // Keychain accessibility class), still writable by background auto-enrich.
+        try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 }

@@ -60,12 +60,10 @@ struct HomeDashboardView: View {
     @Query(sort: \Block.sortOrder)
     private var allBlocks: [Block]
 
-    /// Completed items — fetched separately for the "completed today" trail.
-    @Query(
-        filter: #Predicate<AgendaItem> { $0.isComplete },
-        sort: [SortDescriptor(\AgendaItem.completedAt, order: .reverse)]
-    )
-    private var completedItems: [AgendaItem]
+    /// Completed items for the "completed today" trail. Bounded to the newest
+    /// 20 (see init) so the full completion history never loads on every render
+    /// (audit PF1); `completedToday` narrows these to today and shows ≤5.
+    @Query private var completedItems: [AgendaItem]
 
     // MARK: State
 
@@ -93,6 +91,20 @@ struct HomeDashboardView: View {
         sort: \InboxItem.createdAt
     )
     private var unprocessedInboxItems: [InboxItem]
+
+    // MARK: - Init
+
+    init() {
+        // Bound the completed-items fetch: newest-completed first, capped at 20.
+        // The "done today" strip only ever surfaces ≤5 from today, so a small
+        // ceiling is plenty and keeps months of history out of memory.
+        var descriptor = FetchDescriptor<AgendaItem>(
+            predicate: #Predicate { $0.isComplete },
+            sortBy: [SortDescriptor(\.completedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 20
+        _completedItems = Query(descriptor)
+    }
 
     // MARK: - Derived
 

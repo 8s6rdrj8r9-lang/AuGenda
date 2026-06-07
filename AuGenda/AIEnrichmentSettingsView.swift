@@ -266,6 +266,31 @@ struct AIEnrichmentSettingsView: View {
         }
     }
 
+    /// Warn when the Ollama host is plain http pointed *outside* the local
+    /// network — task text (incl. neurotype + about-me) would travel
+    /// unencrypted. Loopback / .local / RFC-1918 over http is fine; remote
+    /// should use https. A warning, not a block — a power user may have a
+    /// deliberate setup. (audit S3)
+    private var ollamaHostWarning: String? {
+        let trimmed = ollamaHost.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        guard let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              let host = url.host?.lowercased() else {
+            return "That doesn't look like a valid URL (e.g. http://localhost:11434)."
+        }
+        if scheme == "https" { return nil }
+        if scheme != "http"  { return "Use an http (local) or https URL." }
+        let isLocal = host == "localhost" || host == "127.0.0.1" || host == "::1"
+            || host.hasSuffix(".local")
+            || host.hasPrefix("192.168.")
+            || host.hasPrefix("10.")
+            || host.hasPrefix("172.")   // approx RFC-1918 172.16–31 range
+        return isLocal
+            ? nil
+            : "Plain http outside your local network — task text would be sent unencrypted. Use https for a remote server."
+    }
+
     private var ollamaConfigSection: some View {
         Section {
             HStack {
@@ -277,6 +302,12 @@ struct AIEnrichmentSettingsView: View {
                     .textInputAutocapitalization(.never)
                     #endif
                     .autocorrectionDisabled()
+            }
+            if let warning = ollamaHostWarning {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(Tokens.Color.warning)
+                    .accessibilityLabel("Warning: \(warning)")
             }
             HStack {
                 Text("Model")
