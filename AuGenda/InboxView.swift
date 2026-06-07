@@ -179,6 +179,10 @@ struct InboxItemRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(item.source == .voiceCapture ? "Dictated" : "Captured") note: \(item.rawCapture)")
+        .accessibilityHint(item.hasAISuggestions
+            ? "AI suggestions ready. Opens review to add to tasks."
+            : "Opens review to add to tasks.")
     }
 }
 

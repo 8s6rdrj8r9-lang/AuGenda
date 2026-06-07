@@ -1030,6 +1030,47 @@ extension TaskSurfaceData {
     }
 }
 
+// MARK: - TaskSurfaceData accessibility
+//
+// VoiceOver gets ONE cognitive-meaning sentence, not a pile of fragments
+// ("Call pharmacy, at 2:00 PM, friction high, moderate energy, context phone")
+// — the spec's "current task, manageable" bar, not "green dot".
+
+extension TaskSurfaceData {
+    var accessibilitySummary: String {
+        var parts: [String] = [title.isEmpty ? "Untitled" : title]
+        if let scheduledDate {
+            parts.append("at " + scheduledDate.formatted(date: .omitted, time: .shortened))
+        }
+        if priority == 2      { parts.append("urgent") }
+        else if priority == 1 { parts.append("high priority") }
+        parts.append("friction \(frictionWord)")
+        parts.append("\(energyWord) energy")
+        if !contextTag.isEmpty { parts.append("context \(contextTag)") }
+        if needsBodyDouble     { parts.append("benefits from a body double") }
+        if hyperfocusRisk      { parts.append("hyperfocus risk") }
+        return parts.joined(separator: ", ")
+    }
+
+    private var frictionWord: String {
+        switch frictionLevel {
+        case ...1: return "very low"
+        case 2:    return "low"
+        case 3:    return "moderate"
+        case 4:    return "high"
+        default:   return "very high"
+        }
+    }
+
+    private var energyWord: String {
+        switch energyRequired {
+        case ...1: return "low"
+        case 2:    return "moderate"
+        default:   return "high"
+        }
+    }
+}
+
 
 // MARK: - Primary Agenda Card
 //
@@ -1073,6 +1114,10 @@ struct PrimaryAgendaCard: View {
                         .foregroundColor(Color.appTextSecondary)
                 }
             }
+            // One cognitive-meaning VoiceOver element for the whole subject.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(surface.accessibilitySummary)
+            .accessibilityAddTraits(.isHeader)
 
             // ── Metadata row (density-gated) ──────────────────────
             if density.showsFullMetadata {
@@ -1103,6 +1148,8 @@ struct PrimaryAgendaCard: View {
                     EnergyDots(level: surface.energyRequired)
                 }
                 .opacity(0.85)
+                // Redundant with the title element's combined label above.
+                .accessibilityHidden(true)
             }
 
             // ── Survival hero spacer: pushes the action toward the bottom

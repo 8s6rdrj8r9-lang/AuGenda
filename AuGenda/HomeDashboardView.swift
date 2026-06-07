@@ -604,6 +604,7 @@ private struct OrientationAnchor: View {
             Text(timeOfDayPhrase)
                 .font(Tokens.Typography.h2)
                 .foregroundColor(Color.appTextPrimary)
+                .accessibilityAddTraits(.isHeader)
 
             // Context strip
             HStack(spacing: Tokens.Spacing.md) {
@@ -657,6 +658,8 @@ private struct OrientationAnchor: View {
                     .cornerRadius(Tokens.Border.radiusSmall)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Capacity mode: \(density.label)\(isPinned ? ", pinned" : "")")
+                .accessibilityHint("Changes how much detail is shown")
 
                 Spacer()
 
@@ -747,6 +750,7 @@ private struct DensityAdvisoryRow: View {
                 .font(.system(size: 14))
                 .foregroundColor(Tokens.Color.warning)
                 .padding(.top, 2)
+                .accessibilityHidden(true)
 
             Text(suggestion.reason)
                 .font(Tokens.Typography.caption)
@@ -772,7 +776,8 @@ private struct DensityAdvisoryRow: View {
         .padding(Tokens.Spacing.md)
         .background(Tokens.Color.warning.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusMedium))
-        .accessibilityElement(children: .combine)
+        // Not .combine — that swallowed the Apply / Not now buttons. The
+        // reason text + two buttons read as separate, actionable elements.
     }
 }
 
@@ -863,6 +868,7 @@ private struct FocusSessionPrimaryCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Tokens.Color.info.opacity(0.10))
         .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusLarge))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -889,6 +895,7 @@ private struct ActiveBlockPrimaryCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.appBackgroundSecondary)
         .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusLarge))
+        .accessibilityElement(children: .combine)
     }
 }
 
