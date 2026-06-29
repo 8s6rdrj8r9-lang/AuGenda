@@ -78,7 +78,12 @@ enum WatchAppContainer {
         // empty-state gracefully via the "Nothing scheduled" copy.
         let schema = Schema([AgendaItem.self])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        return try! ModelContainer(for: schema, configurations: [config])
+        do {
+            return try ModelContainer(for: schema, configurations: [config])
+        } catch {
+            // Absolute last resort — this should never happen for in-memory.
+            fatalError("WatchAppContainer: even in-memory emergency fallback failed: \(error)")
+        }
     }
 
     /// Seed a single demo item so the watch always shows *something* on first

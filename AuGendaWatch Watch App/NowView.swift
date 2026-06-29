@@ -67,17 +67,17 @@ struct NowView: View {
     private var activeProfile: Profile? { profiles.first }
     private var activePrefs: ProfilePreferences? { activeProfile?.preferences }
 
+    // TODO(v2): dead since `density` adopted `effectiveDensity` (which reads
+    // currentEnergyLevel internally). Retained per the fix-push "tag, don't
+    // delete" rule — trivial computed accessor, emits no unused warning.
     private var energyLevel: Int { activePrefs?.currentEnergyLevel ?? 3 }
 
-    /// Watch lives in `.survival` by default (spec §2). Honor the user's
-    /// pinned mode if set; otherwise derive from energy.
+    /// Honor the user's pinned mode if set; otherwise derive from energy. The
+    /// single resolution rule lives on `ProfilePreferences.effectiveDensity`
+    /// (watch-side mirror). Falls back to `.functional` when no profile yet,
+    /// matching the prior `autoFrom(energyLevel: 3)` default.
     private var density: DensityMode {
-        if let raw = activePrefs?.densityPinnedRaw,
-           !raw.isEmpty,
-           let pinned = DensityMode(rawValue: raw) {
-            return pinned
-        }
-        return DensityMode.autoFrom(energyLevel: energyLevel)
+        activePrefs?.effectiveDensity ?? .functional
     }
 
     private var visibleItems: [AgendaItem] {
@@ -97,9 +97,7 @@ struct NowView: View {
         !recoveryDismissed
             && nowItem != nil
             && (session.focusSessionActive == false)
-            // TODO(watch v2): wire InterruptionContext.shouldShowRecovery
-            // through to the watch (currently iOS-only via UserDefaults).
-            && false
+            && session.pendingRecovery
     }
 
     // MARK: Body
@@ -184,9 +182,10 @@ struct NowView: View {
 
     // MARK: - Zone 2: Recovery card
 
-    /// Inline recovery card per Spec §3, §6. Currently gated by a stub flag
-    /// (`shouldShowRecovery` returns false) until interruption-context state
-    /// flows through WatchConnectivity (v2).
+    /// Inline recovery card per Spec §3, §6. Shows when the phone reports
+    /// an interrupted activity via WatchConnectivity (`pendingRecovery`).
+    /// The iOS side sends this flag in `buildPayload` when
+    /// `InterruptionContext.currentActivity()` is non-nil.
     private var recoveryCard: some View {
         VStack(alignment: .leading, spacing: WatchTokens.Spacing.sm) {
             HStack(spacing: WatchTokens.Spacing.xs) {

@@ -31,6 +31,11 @@ enum EnergyCheckInTracker {
         UserDefaults.standard.set(Date.now.timeIntervalSince1970, forKey: key)
     }
 
+    // Time-gated: compares `Date.now` against the last check-in. There is no
+    // timer — this only re-evaluates when a view reading it happens to
+    // re-render for some other reason. The staleness dot can therefore lag
+    // until the next incidental refresh. Intentional for v1 (no timer
+    // machinery this push).
     static var isStale: Bool {
         guard let last = lastCheckIn else { return true }
         return Date.now.timeIntervalSince(last) > staleThreshold
@@ -104,6 +109,10 @@ enum InterruptionContext {
         static let lastContextLabel = "irp.lastContextLabel"
         // Legacy: used to hold a plaintext task title. Cleared aggressively.
         static let legacyLastItemTitle = "irp.lastItemTitle"
+        // Resume-after-interruption keys (separate from recovery prompt)
+        static let activity = "interruptionContext.activity"
+        static let itemID = "interruptionContext.itemID"
+        static let timestamp = "interruptionContext.timestamp"
     }
 
     // MARK: Getters / setters
@@ -162,6 +171,20 @@ enum InterruptionContext {
         lastActiveDate = .now
         if let id = itemID { lastItemID = id }
         lastContextLabel = contextLabel
+        // Also write to the resume-after-interruption keys
+        defaults.set(contextLabel, forKey: Key.activity)
+        defaults.set(itemID?.uuidString, forKey: Key.itemID)
+        defaults.set(Date.now.timeIntervalSince1970, forKey: Key.timestamp)
+    }
+
+    /// Returns the recent activity if the user was interrupted within the last 15 minutes.
+    static func currentActivity() -> (label: String, itemID: UUID?, timestamp: Date)? {
+        guard let label = defaults.string(forKey: Key.activity) else { return nil }
+        let ts = defaults.double(forKey: Key.timestamp)
+        let timestamp = Date(timeIntervalSince1970: ts)
+        guard Date.now.timeIntervalSince(timestamp) < 15 * 60 else { return nil }
+        let itemID = defaults.string(forKey: Key.itemID).flatMap(UUID.init)
+        return (label, itemID, timestamp)
     }
 
     /// Wipes all stored context after the user acts on the recovery prompt.
@@ -170,6 +193,9 @@ enum InterruptionContext {
         defaults.removeObject(forKey: Key.legacyLastItemTitle)
         defaults.set(0, forKey: Key.lastActiveDate)
         defaults.removeObject(forKey: Key.lastContextLabel)
+        defaults.removeObject(forKey: Key.activity)
+        defaults.removeObject(forKey: Key.itemID)
+        defaults.removeObject(forKey: Key.timestamp)
     }
 
     /// Whether to show the recovery prompt (15+ minutes away).
@@ -558,7 +584,11 @@ struct TaskCard: View {
             item.updatedAt = .now
         }
         notificationManager.cancelNotifications(for: item)
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
         #if canImport(WatchConnectivity)
         watchManager.sendSyncSnapshot()
         #endif
@@ -569,7 +599,11 @@ struct TaskCard: View {
         notificationManager.snooze(item: item, minutes: minutes)
         item.snoozedUntil = Date.now.addingTimeInterval(Double(minutes) * 60)
         item.updatedAt = .now
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
         #if canImport(WatchConnectivity)
         watchManager.sendSyncSnapshot()
         #endif
@@ -588,7 +622,11 @@ struct SubtaskRow: View {
             Button {
                 withAnimation(Tokens.Animation.standardEase()) {
                     subtask.isComplete.toggle()
-                    try? modelContext.save()
+                    do {
+                        try modelContext.save()
+                    } catch {
+                        ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+                    }
                 }
             } label: {
                 Image(systemName: subtask.isComplete ? "checkmark.circle.fill" : "circle")
@@ -938,7 +976,12 @@ private struct TaskCardPreviewHost: View {
 
     init() {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
-        let c = try! ModelContainer(for: AgendaItem.self, SubTask.self, configurations: config)
+        let c: ModelContainer
+        do {
+            c = try ModelContainer(for: AgendaItem.self, SubTask.self, configurations: config)
+        } catch {
+            fatalError("Preview container failed: \(error)")
+        }
 
         let i1 = AgendaItem(title: "Reply to Jane's email about the project timeline",
                             frictionLevel: 2, energyRequired: 1, contextTag: "phone")

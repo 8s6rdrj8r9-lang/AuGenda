@@ -19,6 +19,8 @@ struct FocusSessionView: View {
 
     @EnvironmentObject private var notificationManager: NotificationManager
     @EnvironmentObject private var profileManager: ActiveProfileManager
+    @Environment(\.modelContext) private var modelContext
+
     @Query(
         filter: #Predicate<AgendaTask> { !$0.isComplete && !$0.isAbandoned },
         sort: \AgendaTask.sortOrder
@@ -27,11 +29,18 @@ struct FocusSessionView: View {
 
     @State private var selectedTask: AgendaTask? = nil
     @State private var showTaskPicker = false
+    @State private var showInterruptionPicker = false
+    @State private var showHistory = false
     @State private var inBreak = false
     @State private var breakEndsAt: Date? = nil
 
     private var sessionMinutes: Int { profileManager.activePreferences?.focusSessionMinutes ?? 25 }
     private var breakMinutes: Int { profileManager.activePreferences?.breakMinutes ?? 10 }
+
+    private var suggestedMinutes: Int? {
+        let energy = profileManager.activePreferences?.currentEnergyLevel ?? 3
+        return CognitiveProfile.suggestedFocusLength(in: modelContext, energyLevel: energy)
+    }
 
     var body: some View {
         NavigationStack {
@@ -65,6 +74,22 @@ struct FocusSessionView: View {
             #if os(iOS)
             .presentationDragIndicator(.visible)
             #endif
+            }
+            .sheet(isPresented: $showInterruptionPicker) {
+                InterruptionPickerSheet { reason in
+                    notificationManager.recordInterruption(reason: reason)
+                }
+                #if os(iOS)
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+                #endif
+            }
+            .sheet(isPresented: $showHistory) {
+                FocusSessionHistoryView()
+                #if os(iOS)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                #endif
             }
         }
         // When a session ends naturally (focusSessionActive flips to false), start the break
@@ -106,6 +131,15 @@ struct FocusSessionView: View {
             }
             .buttonStyle(.bordered)
             .tint(.red)
+
+            Button {
+                showInterruptionPicker = true
+            } label: {
+                Label("I got interrupted", systemImage: "exclamationmark.triangle")
+                    .font(.subheadline)
+            }
+            .buttonStyle(.bordered)
+            .tint(.orange)
         }
     }
 
@@ -189,6 +223,15 @@ struct FocusSessionView: View {
                 }
             }
 
+            if let suggested = suggestedMinutes, suggested != sessionMinutes {
+                HStack {
+                    Text("Suggested: \(suggested) min (based on your history)")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                }
+            }
+
             // Start button
             Button {
                 startSession()
@@ -200,6 +243,15 @@ struct FocusSessionView: View {
                     .padding(18)
                     .background(Color.appAccent, in: RoundedRectangle(cornerRadius: 16))
                     .foregroundStyle(.black)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                showHistory = true
+            } label: {
+                Label("View History", systemImage: "chart.bar")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
         }

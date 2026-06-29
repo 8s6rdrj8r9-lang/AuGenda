@@ -10,6 +10,9 @@
 // API ref: https://ai.google.dev/api/generate-content
 
 import Foundation
+import os.log
+
+private let logger = Logger(subsystem: "com.augenda.AuGenda", category: "AIEnricherGemini")
 
 private struct GeminiRequest: Encodable {
     let contents: [GContent]
@@ -168,9 +171,15 @@ struct GeminiEnricher: AITaskEnricher {
         } catch {
             // Strip fences and retry
             let stripped = Self.stripCodeFences(text)
-            guard let strippedData = stripped.data(using: .utf8),
-                  let retry = try? JSONDecoder().decode(TaskEnrichment.self, from: strippedData) else {
+            guard let strippedData = stripped.data(using: .utf8) else {
                 throw AIEnricherError.invalidResponse(detail: "inner decode failed")
+            }
+            let retry: TaskEnrichment
+            do {
+                retry = try JSONDecoder().decode(TaskEnrichment.self, from: strippedData)
+            } catch {
+                logger.error("Gemini inner decode failed after stripping fences: \(error.localizedDescription, privacy: .public)")
+                throw AIEnricherError.invalidResponse(detail: "inner decode failed: \(error.localizedDescription)")
             }
             enrichment = retry
         }

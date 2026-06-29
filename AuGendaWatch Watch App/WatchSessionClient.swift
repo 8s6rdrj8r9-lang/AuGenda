@@ -63,6 +63,7 @@ struct WatchSyncPayload: Codable {
     var focusSessionEndsAt: Date?
     var pendingTaskCount: Int
     var lowFrictionTaskCount: Int
+    var pendingRecovery: Bool
 }
 
 // MARK: - WatchSessionClient
@@ -81,6 +82,7 @@ final class WatchSessionClient: NSObject, ObservableObject {
     @Published var lastSyncDate: Date? = nil
     @Published var focusSessionActive: Bool = false
     @Published var focusSessionEndsAt: Date? = nil
+    @Published var pendingRecovery: Bool = false
 
     /// Set from `AuGendaWatchApp` on launch so the client can persist
     /// incoming sync snapshots straight to the watch's local SwiftData.
@@ -171,11 +173,14 @@ final class WatchSessionClient: NSObject, ObservableObject {
     /// iPhone snapshot is deferred (the watch reads its own CloudKit-synced
     /// store anyway).
     private func handleSyncSnapshot(_ message: [String: Any]) {
-        if let active = message[WCMessageKey.focusState] as? Bool {
+        if let active = message["focusSessionActive"] as? Bool {
             focusSessionActive = active
         }
         if let endsAtTS = message["focusEndsAt"] as? TimeInterval {
             focusSessionEndsAt = Date(timeIntervalSince1970: endsAtTS)
+        }
+        if let pending = message["pendingRecovery"] as? Bool {
+            pendingRecovery = pending
         }
         lastSyncDate = .now
     }
@@ -260,6 +265,7 @@ final class WatchSessionClient: ObservableObject {
     @Published var lastSyncDate: Date? = nil
     @Published var focusSessionActive: Bool = false
     @Published var focusSessionEndsAt: Date? = nil
+    @Published var pendingRecovery: Bool = false
     var modelContext: ModelContext?
     private init() {}
     func sendTaskCompleted(clientID: UUID) {}

@@ -16,6 +16,9 @@
 // (would replay the API key over the wire unnecessarily).
 
 import Foundation
+import os.log
+
+private let logger = Logger(subsystem: "com.augenda.AuGenda", category: "OpenAICompatibleClient")
 
 // MARK: - Wire shapes (Codable mirrors of OpenAI's chat-completions API)
 
@@ -158,12 +161,17 @@ struct OpenAICompatibleClient: Sendable {
         } catch {
             // Some providers wrap JSON in ```json fences — strip and retry once.
             let stripped = Self.stripCodeFences(content)
-            if let strippedData = stripped.data(using: .utf8),
-               let retry = try? JSONDecoder().decode(TaskEnrichment.self, from: strippedData) {
-                enrichment = retry
-            } else {
+            guard let strippedData = stripped.data(using: .utf8) else {
                 throw AIEnricherError.invalidResponse(detail: "inner decode failed")
             }
+            let retry: TaskEnrichment
+            do {
+                retry = try JSONDecoder().decode(TaskEnrichment.self, from: strippedData)
+            } catch {
+                logger.error("OpenAI-compatible inner decode failed after stripping fences: \(error.localizedDescription, privacy: .public)")
+                throw AIEnricherError.invalidResponse(detail: "inner decode failed: \(error.localizedDescription)")
+            }
+            enrichment = retry
         }
 
         enrichment.usage = TaskEnrichment.Usage(

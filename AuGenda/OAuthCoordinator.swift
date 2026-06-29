@@ -27,12 +27,15 @@
 
 import Foundation
 import Combine
+import os.log
 #if canImport(AuthenticationServices)
 import AuthenticationServices
 #endif
 #if os(iOS)
 import UIKit
 #endif
+
+private let logger = Logger(subsystem: "com.augenda.AuGenda", category: "OAuthCoordinator")
 
 // MARK: - Tokens
 
@@ -119,8 +122,14 @@ final class OAuthCoordinator: NSObject, ObservableObject {
         ]
         var result: AnyObject?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              let tokens = try? JSONDecoder().decode(OAuthTokens.self, from: data) else {
+              let data = result as? Data else {
+            return nil
+        }
+        let tokens: OAuthTokens
+        do {
+            tokens = try JSONDecoder().decode(OAuthTokens.self, from: data)
+        } catch {
+            logger.error("Failed to decode stored OAuth tokens: \(error.localizedDescription, privacy: .public)")
             return nil
         }
         return tokens
@@ -136,10 +145,23 @@ final class OAuthCoordinator: NSObject, ObservableObject {
             kSecAttrService as String:  "com.augenda.AuGenda.oauth",
             kSecAttrAccount as String:  account
         ]
-        let attrs: [String: Any] = [
+        var attrs: [String: Any] = [
             kSecValueData as String:    data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         ]
+        #if os(iOS)
+        if #available(iOS 15.0, *) {
+            var error: Unmanaged<CFError>?
+            if let accessControl = SecAccessControlCreateWithFlags(
+                kCFAllocatorDefault,
+                kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+                .biometryCurrentSet,
+                &error
+            ) {
+                attrs[kSecAttrAccessControl as String] = accessControl
+            }
+        }
+        #endif
         if SecItemUpdate(queryBase as CFDictionary, attrs as CFDictionary) == errSecSuccess {
             return
         }
@@ -250,8 +272,12 @@ final class OAuthCoordinator: NSObject, ObservableObject {
             throw OAuthError.tokenExchangeFailed(detail: "refresh non-2xx")
         }
 
-        guard let decoded = try? JSONDecoder().decode(TokenResponse.self, from: data) else {
-            throw OAuthError.tokenExchangeFailed(detail: "decode")
+        let decoded: TokenResponse
+        do {
+            decoded = try JSONDecoder().decode(TokenResponse.self, from: data)
+        } catch {
+            logger.error("Failed to decode token refresh response: \(error.localizedDescription, privacy: .public)")
+            throw OAuthError.tokenExchangeFailed(detail: "decode: \(error.localizedDescription)")
         }
 
         let tokens = OAuthTokens(
@@ -311,8 +337,12 @@ final class OAuthCoordinator: NSObject, ObservableObject {
             throw OAuthError.tokenExchangeFailed(detail: "non-2xx: \(snippet)")
         }
 
-        guard let decoded = try? JSONDecoder().decode(TokenResponse.self, from: data) else {
-            throw OAuthError.tokenExchangeFailed(detail: "decode failed")
+        let decoded: TokenResponse
+        do {
+            decoded = try JSONDecoder().decode(TokenResponse.self, from: data)
+        } catch {
+            logger.error("Failed to decode token exchange response: \(error.localizedDescription, privacy: .public)")
+            throw OAuthError.tokenExchangeFailed(detail: "decode failed: \(error.localizedDescription)")
         }
 
         return OAuthTokens(

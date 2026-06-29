@@ -302,15 +302,7 @@ struct CognitiveStateSelector: View {
     /// the auto-derived mode (if not). Drives the picker's selection
     /// indicator so the user can see where they stand before changing.
     private func hydrate() {
-        guard let prefs = profileManager.activePreferences else {
-            current = .functional
-            return
-        }
-        if let pinned = prefs.densityPinned {
-            current = pinned
-        } else {
-            current = DensityMode.autoFrom(energyLevel: prefs.currentEnergyLevel)
-        }
+        current = profileManager.activePreferences?.effectiveDensity ?? .functional
     }
 
     /// Commit a mode. Two code paths:
@@ -321,17 +313,22 @@ struct CognitiveStateSelector: View {
     ///   setup) → stash the choice in `pendingDensityRaw`. ProfileSetupView
     ///   will pick it up when it creates the profile.
     ///
-    /// In both cases we set BOTH `currentEnergyLevel` (so auto-derivation
-    /// also lands on this mode) and `densityPinned` (so the explicit
-    /// choice persists past later energy fluctuations).
+    /// Under Option A a check-in is a SIGNAL, never a pin: we write
+    /// `currentEnergyLevel` only (via the shared `representativeEnergyLevel`
+    /// mapping) so `effectiveDensity` resolves to this mode while leaving the
+    /// user free to be re-nudged by the advisor. The density picker sheet is
+    /// the only surface that pins.
     private func apply(_ mode: DensityMode) {
         current = mode
 
         if let prefs = profileManager.activePreferences {
-            prefs.currentEnergyLevel = energyLevel(for: mode)
-            prefs.densityPinned = mode
+            prefs.currentEnergyLevel = mode.representativeEnergyLevel
             prefs.updatedAt = .now
-            try? modelContext.save()
+            do {
+                try modelContext.save()
+            } catch {
+                ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            }
         } else {
             // No active profile yet — first-launch flow. Park the choice;
             // ProfileSetupView reads + applies + clears it on save.
@@ -348,17 +345,6 @@ struct CognitiveStateSelector: View {
         CognitiveCheckInTracker.record()
 
         isPresented = false
-    }
-
-    /// Inverse of `DensityMode.autoFrom` — pick a representative energy
-    /// level so the two fields stay in sync if the pin is later cleared.
-    private func energyLevel(for mode: DensityMode) -> Int {
-        switch mode {
-        case .survival:   return 1
-        case .low:        return 2
-        case .functional: return 3
-        case .high:       return 4
-        }
     }
 }
 

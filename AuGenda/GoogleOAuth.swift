@@ -33,16 +33,24 @@
 
 import Foundation
 
+// ⚠️ SECURITY: Before shipping to TestFlight or App Store, run
+//    Scripts/validate-oauth.sh to confirm the client ID is not a placeholder.
+//    Set AUGENDA_GOOGLE_CLIENT_ID in Xcode Build Settings → User-Defined.
+
 enum GoogleOAuth {
 
-    // Real iOS OAuth client (project: AuGenda). iOS clients have no secret,
-    // and the reversed-ID scheme ships in the bundle anyway, so this is fine
-    // in source. To re-create, follow the checklist above.
-    static let clientID = "416358058147-9g1kdn4bpip0ink7mg0ou6foj1a3nk4k.apps.googleusercontent.com"
+    // Must be set via Xcode build settings (AUGENDA_GOOGLE_CLIENT_ID) before shipping.
+    // Hardcoding a real client ID in source is a security risk; this falls back to a
+    // placeholder so the app compiles out-of-the-box but disables Sign-In until configured.
+    static let clientID = ProcessInfo.processInfo.environment["AUGENDA_GOOGLE_CLIENT_ID"]
+        ?? "YOUR_CLIENT_ID_HERE.apps.googleusercontent.com"
 
     /// Reversed-DNS form is what Google requires for iOS OAuth clients.
     /// Must match the URL scheme registered in Info.plist (CFBundleURLTypes).
-    static let redirectURI = "com.googleusercontent.apps.416358058147-9g1kdn4bpip0ink7mg0ou6foj1a3nk4k:/oauth2redirect"
+    static let redirectURI = {
+        let reversed = clientID.components(separatedBy: ".").reversed().joined(separator: ".")
+        return "\(reversed):/oauth2redirect"
+    }()
 
     /// Scope for Gemini / Generative Language API access.
     static let scope = "https://www.googleapis.com/auth/generative-language"
@@ -53,7 +61,8 @@ enum GoogleOAuth {
     /// Quick check — is the OAuth client configured? Used by the
     /// Settings UI to disable the Sign-In button on placeholder builds.
     static var isConfigured: Bool {
-        !clientID.contains("PLACEHOLDER")
+        clientID != "YOUR_CLIENT_ID_HERE.apps.googleusercontent.com"
+        && !clientID.contains("YOUR_CLIENT_ID")
     }
 
     /// Static config for the generic coordinator. Google requires

@@ -4,6 +4,9 @@
 import SwiftUI
 import SwiftData
 import UserNotifications
+#if os(iOS)
+import UIKit
+#endif
 #if canImport(WatchConnectivity)
 import WatchConnectivity
 #endif
@@ -40,6 +43,13 @@ struct AuGendaApp: App {
                 .environmentObject(notificationManager)
                 .environmentObject(blockManager)
                 .environmentObject(profileManager)
+                .environment(\.uiScale, profileManager.activePreferences?.uiScale ?? 1.0)
+                #if os(iOS)
+                .environment(\.reduceMotion, profileManager.activePreferences?.reduceMotion ?? UIAccessibility.isReduceMotionEnabled)
+                #else
+                .environment(\.reduceMotion, profileManager.activePreferences?.reduceMotion ?? false)
+                #endif
+                .environment(\.lowStimulationMode, profileManager.activePreferences?.lowStimulationMode ?? false)
                 #if canImport(WatchConnectivity)
                 .environmentObject(watchManager)
                 #endif
@@ -85,6 +95,7 @@ struct RootView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var blockManager: BlockManager
     @EnvironmentObject private var profileManager: ActiveProfileManager
+    @EnvironmentObject private var notificationManager: NotificationManager
     #if canImport(WatchConnectivity)
     @EnvironmentObject private var watchManager: WatchConnectivityManager
     #endif
@@ -108,6 +119,8 @@ struct RootView: View {
     @AppStorage("checkIn.preferenceOffered") private var checkInPreferenceOffered: Bool = false
 
     @State private var showCheckInSelector = false
+    @State private var resumePrompt: (label: String, itemID: UUID?)? = nil
+    @State private var resumeDismissTask: Task<Void, Never>? = nil
 
     /// First-launch sequence is driven by a single Step enum routed through
     /// one `.sheet(item:)` modifier. One sheet at a time, no sibling races.
@@ -130,12 +143,63 @@ struct RootView: View {
 
     var body: some View {
         ContentView()
+            .overlay(alignment: .top) {
+                if let resume = resumePrompt {
+                    VStack(spacing: 0) {
+                        HStack(spacing: Tokens.Spacing.sm) {
+                            Image(systemName: "arrow.uturn.backward.circle.fill")
+                                .foregroundColor(Color.appAccent)
+                            Text("You were working on \(resume.label). Resume?")
+                                .font(Tokens.Typography.caption)
+                                .foregroundColor(Color.appTextPrimary)
+                            Spacer()
+                            Button {
+                                InterruptionContext.clear()
+                                resumePrompt = nil
+                                resumeDismissTask?.cancel()
+                            } label: {
+                                Text("Resume")
+                                    .font(Tokens.Typography.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(Color.appAccent)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Resume \(resume.label)")
+                            .accessibilityHint("Tap to resume your previous activity")
+                            Button {
+                                resumePrompt = nil
+                                resumeDismissTask?.cancel()
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.caption)
+                                    .foregroundColor(Color.appTextSecondary)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Dismiss resume prompt")
+                        }
+                        .padding(Tokens.Spacing.base)
+                        .background(Color.appAccent.opacity(0.1))
+                        .overlay(
+                            Rectangle()
+                                .frame(height: 2)
+                                .foregroundColor(Color.appAccent),
+                            alignment: .top
+                        )
+                        Spacer()
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .animation(.easeInOut(duration: 0.25), value: resumePrompt != nil)
+                    .zIndex(100)
+                }
+            }
             .onAppear {
                 blockManager.modelContext = modelContext
                 blockManager.seedDefaultsIfNeeded()
 
                 // Give profileManager its context — triggers loadActiveProfile()
                 profileManager.modelContext = modelContext
+
+                notificationManager.modelContext = modelContext
 
                 #if canImport(WatchConnectivity)
                 watchManager.modelContext = modelContext
@@ -147,6 +211,7 @@ struct RootView: View {
                 // capacity sheet owns brand-new installs, so this only
                 // applies once a profile exists.
                 if !profiles.isEmpty,
+                   profileManager.activePreferences?.showCheckInNudges != false,
                    CognitiveCheckInTracker.shouldPrompt(scenePhase: .active) {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         showCheckInSelector = true
@@ -155,11 +220,27 @@ struct RootView: View {
             }
             // Check for recurring cognitive check-ins based on frequency
             .onChange(of: scenePhase) { _, newPhase in
+                if newPhase == .active {
+                    if let activity = InterruptionContext.currentActivity() {
+                        resumePrompt = (activity.label, activity.itemID)
+                        #if os(iOS)
+                        UIAccessibility.post(notification: .announcement, argument: "You were working on \(activity.label). Resume?")
+                        #endif
+                        resumeDismissTask?.cancel()
+                        resumeDismissTask = Task { @MainActor in
+                            try? await Task.sleep(for: .seconds(10))
+                            guard !Task.isCancelled else { return }
+                            resumePrompt = nil
+                        }
+                    }
+                }
+
                 guard !profiles.isEmpty && firstLaunchStep == nil && !showCheckInSelector else { return }
                 let freq = CognitiveCheckInTracker.frequency
+                let showNudges = profileManager.activePreferences?.showCheckInNudges ?? true
 
                 if newPhase == .active {
-                    if (freq == .everyForeground || freq == .daily)
+                    if showNudges && (freq == .everyForeground || freq == .daily)
                         && CognitiveCheckInTracker.shouldPrompt(scenePhase: newPhase) {
                         showCheckInSelector = true
                     }
@@ -174,12 +255,16 @@ struct RootView: View {
                 if isEmpty {
                     // Brand-new install — start with the overwhelm check.
                     firstLaunchStep = .capacity
-                } else if !onboardingCompleted
-                       && profileManager.activePreferences?.densityPinned != nil
-                       && profileManager.activePreferences?.densityPinned != .survival {
-                    // Returning user who has a profile + capacity pin but
-                    // never finished onboarding (and isn't in survival mode,
-                    // since survival users skip onboarding entirely).
+                } else if !onboardingCompleted,
+                          let prefs = profileManager.activePreferences,
+                          prefs.effectiveDensity != .survival,
+                          prefs.effectiveDensity != .low {
+                    // Returning user who has a profile but never finished
+                    // onboarding and isn't in a low-capacity mode. Under
+                    // Option A the pin is usually unset, so we gate on the
+                    // resolved capacity — unified with handleStepDismiss's
+                    // identical survival||low skip rule (they used to disagree:
+                    // this branch only excluded survival).
                     firstLaunchStep = .onboarding
                 } else if onboardingCompleted && !checkInPreferenceOffered {
                     // Skipped onboarding (declared overwhelm on first launch)
@@ -275,10 +360,7 @@ struct RootView: View {
 
         // Profile just created → onboarding decision based on chosen mode.
         if !onboardingCompleted {
-            let mode = profileManager.activePreferences?.densityPinned
-                ?? DensityMode.autoFrom(
-                    energyLevel: profileManager.activePreferences?.currentEnergyLevel ?? 3
-                )
+            let mode = profileManager.activePreferences?.effectiveDensity ?? .functional
 
             // Survival + Low capacity users skip the onboarding tour — the
             // whole point of declaring overwhelm is to NOT be tour-walked.

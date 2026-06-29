@@ -18,6 +18,8 @@ struct AuDHDCard<Content: View>: View {
     var spacing: CGFloat = Tokens.Spacing.elementSpacing
     var isSeparated: Bool = true  // Add top border if in a list
 
+    @Environment(\.uiScale) private var uiScale
+
     init(
         spacing: CGFloat = Tokens.Spacing.elementSpacing,
         isSeparated: Bool = true,
@@ -29,10 +31,10 @@ struct AuDHDCard<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: spacing) {
+        VStack(alignment: .leading, spacing: spacing * uiScale) {
             content
         }
-        .padding(Tokens.Spacing.cardPadding)
+        .padding(Tokens.Spacing.cardPadding * uiScale)
         .background(Color.appBackground)
         .cornerRadius(Tokens.Border.radiusMedium)
         .overlay(
@@ -69,6 +71,8 @@ struct AuDHDButton: View {
     var isDisabled: Bool = false
     var fullWidth: Bool = true
 
+    @Environment(\.uiScale) private var uiScale
+
     init(
         _ title: String,
         icon: String? = nil,
@@ -89,7 +93,7 @@ struct AuDHDButton: View {
 
     var body: some View {
         Button(action: isLoading || isDisabled ? {} : action) {
-            HStack(spacing: Tokens.Spacing.base) {
+            HStack(spacing: Tokens.Spacing.base * uiScale) {
                 if isLoading {
                     ProgressView()
                         .tint(foregroundColor)
@@ -103,9 +107,9 @@ struct AuDHDButton: View {
                     .fontWeight(.semibold)
                     .lineLimit(1)
             }
-            .frame(height: Tokens.Spacing.touchMinimum)
+            .frame(height: Tokens.Spacing.touchMinimum * uiScale)
             .frame(maxWidth: fullWidth ? .infinity : nil)
-            .padding(.horizontal, Tokens.Spacing.buttonPaddingH)
+            .padding(.horizontal, Tokens.Spacing.buttonPaddingH * uiScale)
             .foregroundColor(foregroundColor)
             .background(backgroundColor)
             .cornerRadius(Tokens.Border.radiusLarge)
@@ -208,11 +212,13 @@ struct OptionCard: View {
     let isSelected: Bool
     let action: () -> Void
 
+    @Environment(\.uiScale) private var uiScale
+
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
-                HStack(spacing: Tokens.Spacing.base) {
-                    VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
+            VStack(alignment: .leading, spacing: Tokens.Spacing.sm * uiScale) {
+                HStack(spacing: Tokens.Spacing.base * uiScale) {
+                    VStack(alignment: .leading, spacing: Tokens.Spacing.sm * uiScale) {
                         Text(title)
                             .font(Tokens.Typography.body)
                             .fontWeight(.semibold)
@@ -234,7 +240,7 @@ struct OptionCard: View {
                             isSelected ? Tokens.Color.primary : Color.appBorder
                         )
                 }
-                .padding(Tokens.Spacing.base)
+                .padding(Tokens.Spacing.base * uiScale)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(isSelected ? Color.appBackgroundSecondary : Color.appBackground)
@@ -391,35 +397,55 @@ extension Color {
         #if os(iOS)
         return Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(AppColor.slate900) : UIColor(AppColor.white) })
         #else
-        return Color(NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(AppColor.slate900) : NSColor(AppColor.white) })
+        return Color(NSColor(name: nil, dynamicProvider: { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 15/255, green: 23/255, blue: 42/255, alpha: 1)
+            : NSColor.white
+        }))
         #endif
     }()
     static let appBackgroundSecondary: Color = {
         #if os(iOS)
         return Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(AppColor.slate800) : UIColor(AppColor.slate50) })
         #else
-        return Color(NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(AppColor.slate800) : NSColor(AppColor.slate50) })
+        return Color(NSColor(name: nil, dynamicProvider: { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 30/255, green: 41/255, blue: 59/255, alpha: 1)
+            : NSColor(red: 250/255, green: 250/255, blue: 251/255, alpha: 1)
+        }))
         #endif
     }()
     static let appTextPrimary: Color = {
         #if os(iOS)
         return Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(AppColor.white) : UIColor(AppColor.slate900) })
         #else
-        return Color(NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(AppColor.white) : NSColor(AppColor.slate900) })
+        return Color(NSColor(name: nil, dynamicProvider: { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor.white
+            : NSColor(red: 15/255, green: 23/255, blue: 42/255, alpha: 1)
+        }))
         #endif
     }()
     static let appTextSecondary: Color = {
         #if os(iOS)
         return Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(AppColor.slate400) : UIColor(AppColor.slate600) })
         #else
-        return Color(NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(AppColor.slate400) : NSColor(AppColor.slate600) })
+        return Color(NSColor(name: nil, dynamicProvider: { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 148/255, green: 163/255, blue: 184/255, alpha: 1)
+            : NSColor(red: 71/255, green: 85/255, blue: 105/255, alpha: 1)
+        }))
         #endif
     }()
     static let appBorder: Color = {
         #if os(iOS)
         return Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(AppColor.slate700) : UIColor(AppColor.slate200) })
         #else
-        return Color(NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(AppColor.slate700) : NSColor(AppColor.slate200) })
+        return Color(NSColor(name: nil, dynamicProvider: { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 51/255, green: 65/255, blue: 85/255, alpha: 1)
+            : NSColor(red: 226/255, green: 232/255, blue: 240/255, alpha: 1)
+        }))
         #endif
     }()
     static let appAccent = AppColor.blue500

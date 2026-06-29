@@ -134,8 +134,14 @@ enum AppFont: String, Codable, CaseIterable, Identifiable {
         case .system:
             return Font.system(style)
         case .atkinson:
+            // ⚠️ Font files must be added to the app target in Xcode
+            // (Build Phases → Copy Bundle Resources) and listed in Info.plist
+            // under UIAppFonts for Font.custom to resolve correctly.
             return Font.custom("AtkinsonHyperlegible-Regular", size: 16, relativeTo: style)
         case .openDyslexic:
+            // ⚠️ Font files must be added to the app target in Xcode
+            // (Build Phases → Copy Bundle Resources) and listed in Info.plist
+            // under UIAppFonts for Font.custom to resolve correctly.
             return Font.custom("OpenDyslexic", size: 16, relativeTo: style)
         }
     }
@@ -327,6 +333,10 @@ final class ProfilePreferences {
     var largeTouchTargets: Bool = false
     var sensoryContextTagsEnabled: Bool = false
     var highContrastMode: Bool = false
+    var showCheckInNudges: Bool = true
+    var lowStimulationMode: Bool = false
+    var reduceMotion: Bool = false
+    var uiScale: Double = 1.0  // 1.0 = normal, 1.25 = large, 1.5 = extra large
 
     // MARK: Watch
     var watchComplicationMode: String = "next-task"
@@ -370,6 +380,15 @@ final class ProfilePreferences {
         }
     }
 
+    /// THE single density resolution rule: an explicit pin wins; otherwise
+    /// derive from live energy. Every surface (Home, watch, selector hydrate,
+    /// onboarding routing) reads this instead of re-deriving
+    /// `pinned ?? autoFrom(energy)` by hand. Computed only — no stored
+    /// attribute, so the CloudKit-additive schema contract is preserved.
+    var effectiveDensity: DensityMode {
+        densityPinned ?? .autoFrom(energyLevel: currentEnergyLevel)
+    }
+
     // MARK: Preset factory
 
     /// Build a new ProfilePreferences pre-filled with defaults for the given neurotypes.
@@ -380,6 +399,9 @@ final class ProfilePreferences {
         for neurotype in neurotypes {
             neurotype.apply(to: prefs)
         }
+        prefs.showCheckInNudges = true
+        prefs.lowStimulationMode = false
+        prefs.reduceMotion = false
         return prefs
     }
 
@@ -481,7 +503,11 @@ final class ActiveProfileManager: ObservableObject {
         profile.preferences = prefs
         ctx.insert(profile)
         ctx.insert(prefs)
-        try? ctx.save()
+        do {
+            try ctx.save()
+        } catch {
+            // Banner not available during seeding; log to console only
+        }
 
         activeProfile = profile
         persistActiveProfileID()

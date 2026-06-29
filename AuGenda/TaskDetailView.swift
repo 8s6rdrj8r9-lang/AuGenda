@@ -39,6 +39,17 @@ struct TaskDetailView: View {
     @State private var showEnrichmentPreview = false
     @State private var enrichmentError: String? = nil
 
+    @State private var blockedByTasks: [AgendaTask] = []
+    @State private var blockingTasks: [AgendaTask] = []
+    @State private var showAddNote = false
+
+    @Query(sort: \Note.createdAt, order: .reverse)
+    private var allNotes: [Note]
+
+    private var relatedNotes: [Note] {
+        allNotes.filter { $0.relatedTaskID == task.clientID }
+    }
+
     /// Resolves the friction label text from the active profile's language preference.
     private var frictionLabelText: String {
         switch profileManager.activePreferences?.frictionLabel ?? .friction {
@@ -149,6 +160,47 @@ struct TaskDetailView: View {
                             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
                     }
 
+                    // ── Related Notes ──
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Notes")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button {
+                                showAddNote = true
+                            } label: {
+                                Image(systemName: "plus.circle")
+                                    .foregroundStyle(Color.appAccent)
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        if relatedNotes.isEmpty {
+                            Text("No notes yet")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(relatedNotes) { note in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    if !note.title.isEmpty {
+                                        Text(note.title)
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                    }
+                                    if !note.body.isEmpty {
+                                        Text(note.body)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding(10)
+                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                            }
+                        }
+                    }
+
                     // ── Steps ──
                     if !sortedSteps.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
@@ -165,7 +217,54 @@ struct TaskDetailView: View {
 
                             ForEach(sortedSteps) { step in
                                 TaskStepRow(step: step) {
-                                    try? modelContext.save()
+                                    do {
+                                        try modelContext.save()
+                                    } catch {
+                                        ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Relationships ──
+                    if !blockedByTasks.isEmpty || !blockingTasks.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            if !blockedByTasks.isEmpty {
+                                Text("Blocked by")
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.secondary)
+                                ForEach(blockedByTasks) { t in
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "lock.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(.yellow)
+                                        Text(t.title)
+                                            .font(.subheadline)
+                                            .foregroundStyle(.primary)
+                                        Spacer()
+                                    }
+                                    .padding(.vertical, 4)
+                                }
+                            }
+                            if !blockingTasks.isEmpty {
+                                Text("Blocks")
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.top, blockedByTasks.isEmpty ? 0 : 8)
+                                ForEach(blockingTasks) { t in
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "arrow.right")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text(t.title)
+                                            .font(.subheadline)
+                                            .foregroundStyle(.primary)
+                                        Spacer()
+                                    }
+                                    .padding(.vertical, 4)
                                 }
                             }
                         }
@@ -306,6 +405,16 @@ struct TaskDetailView: View {
             } message: { msg in
                 Text(msg)
             }
+            .sheet(isPresented: $showAddNote) {
+                AddNoteSheet(relatedTaskID: task.clientID, relatedItemID: nil)
+                    #if os(iOS)
+                    .presentationDetents([.medium])
+                    .presentationDragIndicator(.visible)
+                    #endif
+            }
+            .onAppear {
+                fetchRelationships()
+            }
         }
     }
 
@@ -320,8 +429,7 @@ struct TaskDetailView: View {
 
         let neurotypes = profileManager.activeProfile?.neurotypes.map(\.displayName) ?? []
         let prefs = profileManager.activePreferences
-        let mode: DensityMode = prefs?.densityPinned
-            ?? DensityMode.autoFrom(energyLevel: prefs?.currentEnergyLevel ?? 3)
+        let mode: DensityMode = prefs?.effectiveDensity ?? .functional
         let personalizationContext = personalization.snapshot()
 
         let context = EnrichmentContext(
@@ -339,6 +447,7 @@ struct TaskDetailView: View {
         } catch {
             enrichmentError = (error as? LocalizedError)?.errorDescription
                 ?? error.localizedDescription
+            ErrorBannerController.shared.show("AI enrichment failed: \(error.localizedDescription)")
         }
 
         isEnriching = false
@@ -370,7 +479,11 @@ struct TaskDetailView: View {
         }
 
         task.updatedAt = .now
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
         personalization.recordEnrichment(title: task.title, band: task.difficultyBand)
     }
 
@@ -391,7 +504,11 @@ struct TaskDetailView: View {
             task.isComplete = true
             task.completedAt = .now
             task.updatedAt = .now
-            try? modelContext.save()
+            do {
+                try modelContext.save()
+            } catch {
+                ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            }
             dismiss()
         }
     }
@@ -401,6 +518,32 @@ struct TaskDetailView: View {
         case 1: return "low energy"
         case 2: return "med energy"
         default: return "high energy"
+        }
+    }
+
+    private func fetchRelationships() {
+        let blockedByIDs = task.blockedByTaskIDs(in: modelContext)
+        let blockingIDs = task.blockingTaskIDs(in: modelContext)
+
+        blockedByTasks = []
+        blockingTasks = []
+
+        for id in blockedByIDs {
+            let descriptor = FetchDescriptor<AgendaTask>(
+                predicate: #Predicate { $0.clientID == id }
+            )
+            if let t = try? modelContext.fetch(descriptor).first {
+                blockedByTasks.append(t)
+            }
+        }
+
+        for id in blockingIDs {
+            let descriptor = FetchDescriptor<AgendaTask>(
+                predicate: #Predicate { $0.clientID == id }
+            )
+            if let t = try? modelContext.fetch(descriptor).first {
+                blockingTasks.append(t)
+            }
         }
     }
 }

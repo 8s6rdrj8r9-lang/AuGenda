@@ -182,4 +182,27 @@ extension AgendaTask {
         guard let steps = steps, !steps.isEmpty else { return estimatedMinutes }
         return steps.reduce(0) { $0 + $1.estimatedMinutes }
     }
+
+    /// Returns true if any incomplete task blocks or must precede this task.
+    /// Call this in the view layer where ModelContext is available.
+    func isBlocked(in context: ModelContext) -> Bool {
+        let taskID = self.clientID
+        let descriptor = FetchDescriptor<TaskRelationship>(
+            predicate: #Predicate {
+                $0.targetTaskID == taskID
+                && ($0.typeRaw == "blocks" || $0.typeRaw == "follows")
+            }
+        )
+        guard let relationships = try? context.fetch(descriptor) else { return false }
+        for rel in relationships {
+            let sourceID = rel.sourceTaskID
+            let sourceDescriptor = FetchDescriptor<AgendaTask>(
+                predicate: #Predicate { $0.clientID == sourceID }
+            )
+            if let source = (try? context.fetch(sourceDescriptor))?.first, !source.isComplete {
+                return true
+            }
+        }
+        return false
+    }
 }

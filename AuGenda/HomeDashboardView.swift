@@ -85,6 +85,7 @@ struct HomeDashboardView: View {
     @State private var showAddAgendaItem: Bool = false
     @State private var showBrainDump: Bool = false
     @State private var showInbox: Bool = false
+    @State private var showMorningSetup: Bool = false
 
     @Query(
         filter: #Predicate<InboxItem> { $0.stateRaw == "unprocessed" },
@@ -112,15 +113,18 @@ struct HomeDashboardView: View {
     private var activePrefs: ProfilePreferences? { profileManager.activePreferences }
     private var energyLevel: Int { activePrefs?.currentEnergyLevel ?? 3 }
 
-    /// Effective density mode = pinned (per-profile) OR auto-derived from energy.
+    /// Effective density mode. The single resolution rule (pin wins, else
+    /// auto-from-energy) lives on `ProfilePreferences.effectiveDensity`.
     private var density: DensityMode {
-        if let pinned = activePrefs?.densityPinned {
-            return pinned
-        }
-        return DensityMode.autoFrom(energyLevel: energyLevel)
+        activePrefs?.effectiveDensity ?? .functional
     }
 
     private var isDensityPinned: Bool { activePrefs?.densityPinned != nil }
+
+    private var morningSetupCompletedToday: Bool {
+        guard let lastDate = UserDefaults.standard.object(forKey: "morningSetup.lastDate") as? Date else { return false }
+        return Calendar.current.isDate(lastDate, inSameDayAs: .now)
+    }
 
     /// Tasks visible to the active profile (with the unassigned-legacy fallthrough).
     private var profileItems: [AgendaItem] {
@@ -217,7 +221,11 @@ struct HomeDashboardView: View {
     }
 
     /// Pattern-detected density advisory. Suppressed during the cooldown
-    /// window the user set by tapping "Not now."
+    /// window (shared by apply + dismiss via `DensityAdvisor.cooldownSeconds`).
+    /// Time-gated: the cooldown compares `Date.now` against the stored
+    /// timestamp but there's no timer — it only re-evaluates when this view
+    /// re-renders for some other reason, so a suggestion can reappear slightly
+    /// after the hour rather than exactly on it. Intentional for v1.
     private var advisorSuggestion: DensityAdvisor.Suggestion? {
         if advisorDismissedUntilTS > Date.now.timeIntervalSince1970 { return nil }
         return DensityAdvisor.suggestion(currentDensity: density)
@@ -264,8 +272,13 @@ struct HomeDashboardView: View {
                         DensityAdvisoryRow(
                             suggestion: suggestion,
                             onApply: {
-                                pinDensity(suggestion.target)
-                                advisorDismissedUntilTS = 0
+                                // Option A: the advisor nudges ENERGY, never a
+                                // pin. It also shares the dismiss cooldown so
+                                // applying a drop can't immediately re-arm a
+                                // fresh "drop again" suggestion (the cascade).
+                                applyAdvisorSuggestion(suggestion.target)
+                                advisorDismissedUntilTS =
+                                    Date.now.timeIntervalSince1970 + DensityAdvisor.cooldownSeconds
                             },
                             onDismiss: dismissAdvisor
                         )
@@ -346,7 +359,9 @@ struct HomeDashboardView: View {
                     .keyboardShortcut("n", modifiers: .command)   // ⌘N — new capture (macOS/iPad)
                 }
             }
-            .environment(\.densityMode, density)
+            // Density now injected once at the app root (ContentView), so the
+            // local injection here is redundant — removed. Home's `density`
+            // computed is still used directly for this view's own filtering.
             .background(Color.appBackground)
             .overlay(alignment: .top) {
                 if shouldShowHyperfocusWarning {
@@ -426,10 +441,20 @@ struct HomeDashboardView: View {
                     .presentationDragIndicator(.visible)
                     #endif
             }
+            .sheet(isPresented: $showMorningSetup) {
+                MorningSetupView(isPresented: $showMorningSetup)
+                    #if os(iOS)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                    #endif
+            }
         }
         .onAppear {
             migrateLegacyDensityPinIfNeeded()
             InterruptionContext.recordActivity(contextLabel: "home dashboard")
+            if !morningSetupCompletedToday {
+                showMorningSetup = true
+            }
         }
     }
 
@@ -511,7 +536,27 @@ struct HomeDashboardView: View {
         guard let prefs = activePrefs else { return }
         withAnimation(Tokens.Animation.standardEase(reduce: reduceMotion)) {
             prefs.densityPinned = mode
-            try? modelContext.save()
+            do {
+                try modelContext.save()
+            } catch {
+                ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Apply an advisor suggestion as an ENERGY change (Option A — the advisor
+    /// nudges the live signal, it does not pin). `effectiveDensity` then
+    /// resolves to the suggested mode unless the user holds an explicit pin,
+    /// which always wins.
+    private func applyAdvisorSuggestion(_ mode: DensityMode) {
+        guard let prefs = activePrefs else { return }
+        withAnimation(Tokens.Animation.standardEase(reduce: reduceMotion)) {
+            prefs.currentEnergyLevel = mode.representativeEnergyLevel
+            do {
+                try modelContext.save()
+            } catch {
+                ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -519,13 +564,18 @@ struct HomeDashboardView: View {
         guard let prefs = activePrefs else { return }
         withAnimation(Tokens.Animation.standardEase(reduce: reduceMotion)) {
             prefs.densityPinned = nil
-            try? modelContext.save()
+            do {
+                try modelContext.save()
+            } catch {
+                ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            }
         }
     }
 
     private func dismissAdvisor() {
         withAnimation(Tokens.Animation.standardEase(reduce: reduceMotion)) {
-            advisorDismissedUntilTS = Date.now.timeIntervalSince1970 + 60 * 60   // 1 hour cooldown
+            advisorDismissedUntilTS =
+                Date.now.timeIntervalSince1970 + DensityAdvisor.cooldownSeconds
         }
     }
 
@@ -542,7 +592,11 @@ struct HomeDashboardView: View {
         notificationManager.snooze(item: item, minutes: minutes)
         item.snoozedUntil = tomorrowStart
         item.updatedAt = .now
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
     }
 
     /// Defer a backlog task until tomorrow via `isDeferredUntil` (no
@@ -553,7 +607,11 @@ struct HomeDashboardView: View {
         ActivityLog.recordSnooze()
         task.isDeferredUntil = tomorrowStart
         task.updatedAt = .now
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
     }
 
     /// One-time migration from the legacy device-local @AppStorage key to
@@ -573,7 +631,11 @@ struct HomeDashboardView: View {
            DensityMode(rawValue: legacy) != nil {
             prefs.densityPinnedRaw = legacy
             prefs.updatedAt = .now
-            try? modelContext.save()
+            do {
+                try modelContext.save()
+            } catch {
+                ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            }
         }
 
         // Clear regardless — we only migrate once. If there's no active
@@ -1487,7 +1549,11 @@ private struct AgendaItemDetailSheet: View {
         item.completedAt = .now
         item.updatedAt = .now
         notificationManager.cancelNotifications(for: item)
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
         dismiss()
     }
 
@@ -1496,7 +1562,11 @@ private struct AgendaItemDetailSheet: View {
         notificationManager.snooze(item: item, minutes: minutes)
         item.snoozedUntil = Date.now.addingTimeInterval(Double(minutes) * 60)
         item.updatedAt = .now
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
         dismiss()
     }
 }

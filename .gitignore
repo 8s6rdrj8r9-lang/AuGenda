@@ -1,0 +1,16 @@
+# Xcode
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+project.xcworkspace/
+xcuserdata/
+
+# Build products
+build/
+DerivedData/
+
+# Swift Package Manager
+.build/
+
+# Sensitive
+*.env

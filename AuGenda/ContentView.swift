@@ -71,6 +71,8 @@ struct ContentView: View {
             Color.appBackground
                 .ignoresSafeArea()
 
+            ErrorBanner()
+
             TabView(selection: $selectedTab) {
 
                 Group {
@@ -112,6 +114,14 @@ struct ContentView: View {
             .tint(Color.appAccent)
         }
         .environment(\.appFont, profileManager.activeFont)
+        // Root-level density injection — the single source for every
+        // @Environment(\.densityMode) reader in the tree (e.g. PrimaryAgendaCard,
+        // MomentumTaskCard in AuDHDNDComponents), not just Home's subtree.
+        // Reading effectiveDensity here establishes SwiftData @Observable
+        // tracking on densityPinnedRaw + currentEnergyLevel, so the root
+        // re-renders and re-injects when either changes.
+        .environment(\.densityMode, profileManager.activePreferences?.effectiveDensity ?? .functional)
+        .environment(\.uiScale, profileManager.activePreferences?.uiScale ?? 1.0)
         // No .preferredColorScheme — the app follows the system's
         // light/dark setting. All view-level colours go through the
         // adaptive `Color.app*` helpers (defined in AuDHDComponents.swift)
@@ -163,7 +173,11 @@ struct ContentView: View {
         item.isComplete = true
         item.completedAt = .now
         item.updatedAt = .now
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
         #if canImport(WatchConnectivity)
         watchManager.sendSyncSnapshot()
         #endif
@@ -183,7 +197,11 @@ struct ContentView: View {
         notificationManager.snooze(item: item, minutes: minutes)
         item.snoozedUntil = Date.now.addingTimeInterval(Double(minutes) * 60)
         item.updatedAt = .now
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
         #if canImport(WatchConnectivity)
         watchManager.sendSyncSnapshot()
         #endif
@@ -464,7 +482,11 @@ struct AgendaItemRowView: View {
             item.updatedAt = .now
         }
         notificationManager.cancelNotifications(for: item)
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
         #if canImport(WatchConnectivity)
         watchManager.sendSyncSnapshot()
         #endif
@@ -475,7 +497,11 @@ struct AgendaItemRowView: View {
         notificationManager.snooze(item: item, minutes: minutes)
         item.snoozedUntil = Date.now.addingTimeInterval(Double(minutes) * 60)
         item.updatedAt = .now
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
         #if canImport(WatchConnectivity)
         watchManager.sendSyncSnapshot()
         #endif
@@ -605,67 +631,103 @@ struct EnergyCheckView: View {
     private var prefs: ProfilePreferences? { profileManager.activePreferences }
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: Tokens.Spacing.lg) {
             if let profile = profileManager.activeProfile {
-                HStack(spacing: 10) {
+                HStack(spacing: Tokens.Spacing.sm) {
                     ProfileAvatarView(profile: profile, size: 28)
                     Text("How's your energy, \(profile.name)?")
-                        .font(.title3).fontWeight(.semibold)
+                        .font(Tokens.Typography.h2)
                 }
-                .padding(.top, 24)
+                .padding(.top, Tokens.Spacing.lg)
             } else {
                 Text("How's your energy right now?")
-                    .font(.title3).fontWeight(.semibold)
-                    .padding(.top, 24)
+                    .font(Tokens.Typography.h2)
+                    .padding(.top, Tokens.Spacing.lg)
             }
 
-            Text("This adjusts what gets surfaced today.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            // Honesty: the energy→surface claim is only true when nothing is
+            // pinned. Under a pin, say so plainly and offer the one inline way
+            // out (Unpin → the existing densityPinned clear path).
+            if let pinned = prefs?.densityPinned {
+                VStack(spacing: Tokens.Spacing.sm) {
+                    Text("Capacity is pinned to \(pinned.label) — energy is recorded but won't change the view.")
+                        .font(Tokens.Typography.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Unpin") { clearPin() }
+                        .font(Tokens.Typography.label)
+                        .foregroundStyle(Color.appAccent)
+                        .buttonStyle(.plain)
+                }
+                .padding(.horizontal, Tokens.Spacing.base)
+            } else {
+                Text("This adjusts what gets surfaced today.")
+                    .font(Tokens.Typography.body)
+                    .foregroundStyle(.secondary)
+            }
 
-            VStack(spacing: 10) {
+            VStack(spacing: Tokens.Spacing.sm) {
                 ForEach(EnergyLevel.allCases) { level in
                     Button {
                         setEnergy(level.rawValue)
                     } label: {
                         HStack {
                             Text(level.emoji)
-                            Text(level.label).fontWeight(.medium)
+                            Text(level.label)
+                                .font(Tokens.Typography.body)
+                                .fontWeight(.medium)
                             Spacer()
                             if prefs?.currentEnergyLevel == level.rawValue {
                                 Image(systemName: "checkmark")
                                     .foregroundStyle(Color.appAccent)
                             }
                         }
-                        .padding(14)
+                        .padding(Tokens.Spacing.base)
                         .background(
                             prefs?.currentEnergyLevel == level.rawValue
                                 ? Color.appAccent.opacity(0.15)
                                 : Color.secondary.opacity(0.08),
-                            in: RoundedRectangle(cornerRadius: 12)
+                            in: RoundedRectangle(cornerRadius: Tokens.Border.radiusMedium)
                         )
                         .foregroundStyle(.primary)
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal)
+            .padding(.horizontal, Tokens.Spacing.base)
 
             Button("Done") { isPresented = false }
                 .buttonStyle(.borderedProminent)
                 .tint(Color.appAccent)
-                .padding(.bottom, 16)
+                .padding(.bottom, Tokens.Spacing.base)
         }
-        .padding(.horizontal)
+        .padding(.horizontal, Tokens.Spacing.base)
     }
 
     private func setEnergy(_ level: Int) {
         guard let prefs else { return }
         prefs.currentEnergyLevel = level
         prefs.updatedAt = .now
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
         // Record so the OrientationAnchor's stale-energy hint can clear.
         EnergyCheckInTracker.record()
+    }
+
+    /// Clear an explicit pin so energy resumes driving the view — the same
+    /// clear path the density picker's "Auto" uses (densityPinned = nil).
+    private func clearPin() {
+        guard let prefs else { return }
+        prefs.densityPinned = nil
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
     }
 }
 
@@ -782,7 +844,11 @@ struct SettingsView: View {
             set: { newValue in
                 profileManager.activePreferences?.notificationPrivacyStrict = newValue
                 profileManager.activePreferences?.updatedAt = .now
-                try? modelContext.save()
+                do {
+                    try modelContext.save()
+                } catch {
+                    ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+                }
             }
         )
     }
@@ -834,6 +900,26 @@ struct SettingsView: View {
                 } footer: {
                     Text("Auto-fill task metadata (difficulty axes, sub-tasks, time estimates) using on-device or cloud AI. Opt-in, off by default.")
                 }
+
+                // ── Focus History ──
+                Section {
+                    NavigationLink {
+                        FocusSessionHistoryView()
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "chart.bar")
+                                .foregroundStyle(Color.appAccent)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Focus History")
+                                    .fontWeight(.medium)
+                                Text("Past sessions and patterns")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                } header: { Text("Focus") }
 
                 // ── Privacy ──
                 Section {
@@ -942,21 +1028,29 @@ struct SettingsView: View {
     private func eraseAllData() {
         // 1. Delete SwiftData entities. @Relationship cascade rules take care
         //    of children, but we list parents explicitly for clarity.
-        try? modelContext.delete(model: AgendaItem.self)
-        try? modelContext.delete(model: AgendaTask.self)
-        try? modelContext.delete(model: InboxItem.self)
-        try? modelContext.delete(model: SubTask.self)
-        try? modelContext.delete(model: TaskStep.self)
-        try? modelContext.delete(model: Block.self)
-        try? modelContext.delete(model: BlockTask.self)
-        try? modelContext.delete(model: BundleTemplate.self)
-        try? modelContext.delete(model: BundleTemplateItem.self)
-        try? modelContext.delete(model: AttachedBundle.self)
-        try? modelContext.delete(model: AttachedBundleItem.self)
-        try? modelContext.delete(model: ProfilePreferences.self)
-        try? modelContext.delete(model: Profile.self)
-        try? modelContext.delete(model: UserPreferences.self)
-        try? modelContext.save()
+        do {
+            try modelContext.delete(model: AgendaItem.self)
+            try modelContext.delete(model: AgendaTask.self)
+            try modelContext.delete(model: InboxItem.self)
+            try modelContext.delete(model: SubTask.self)
+            try modelContext.delete(model: TaskStep.self)
+            try modelContext.delete(model: Block.self)
+            try modelContext.delete(model: BlockTask.self)
+            try modelContext.delete(model: BundleTemplate.self)
+            try modelContext.delete(model: BundleTemplateItem.self)
+            try modelContext.delete(model: AttachedBundle.self)
+            try modelContext.delete(model: AttachedBundleItem.self)
+            try modelContext.delete(model: ProfilePreferences.self)
+            try modelContext.delete(model: Profile.self)
+            try modelContext.delete(model: UserPreferences.self)
+            try modelContext.delete(model: FocusSession.self)
+            try modelContext.delete(model: TaskRelationship.self)
+            try modelContext.delete(model: Note.self)
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Could not erase all data: \(error.localizedDescription)")
+            return
+        }
 
         // 2. Wipe every secret + AI-derived artefact. "Erase all data" must
         //    leave no credentials or personal profile behind — these never
@@ -981,6 +1075,7 @@ struct SettingsView: View {
             "home.dashboard.useNewHome",
             "home.dashboard.density.pinned",
             "activeProfileID",
+            "morningSetup.lastDate",
             // AI enrichment config (keys/tokens handled in step 2 above)
             "ai.enabled", "ai.activeProvider", "ai.autoEnrichNewTasks",
             "ai.showEnrichButtons",
@@ -1016,7 +1111,11 @@ struct SettingsView: View {
                 }
             }
         }
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
     }
 }
 
@@ -1342,6 +1441,10 @@ struct AddAgendaItemView: View {
     /// is never written even if the provider sends one — interest stays
     /// the user's.
     private func runEnrich() async {
+        guard AIUsageLedger.shared.canEnrich() else {
+            ErrorBannerController.shared.show("AI enrichment paused — monthly budget reached")
+            return
+        }
         guard let provider = AIProvider(rawValue: activeProviderRaw),
               let enricher = AIEnricherRegistry.enricher(for: provider) else {
             enrichState = .failed(message: "No provider configured.")
@@ -1349,10 +1452,7 @@ struct AddAgendaItemView: View {
         }
 
         let neurotypes: [String] = activeProfile?.neurotypes.map(\.rawValue) ?? []
-        let density: String? = profileManager.activePreferences?.densityPinned?.rawValue
-            ?? DensityMode.autoFrom(
-                energyLevel: profileManager.activePreferences?.currentEnergyLevel ?? 3
-            ).rawValue
+        let density: String? = profileManager.activePreferences?.effectiveDensity.rawValue
 
         // Snapshot personalization (about-me + tone + memory + interest
         // opt-in). Nil when the user hasn't set anything — providers
@@ -1434,7 +1534,11 @@ struct AddAgendaItemView: View {
             // Reschedule notifications so the new time is reflected
             notificationManager.cancelNotifications(for: existing)
             notificationManager.scheduleNotifications(for: existing)
-            try? modelContext.save()
+            do {
+                try modelContext.save()
+            } catch {
+                ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            }
         } else {
             let item = AgendaItem(
                 title: title,
@@ -1456,7 +1560,11 @@ struct AddAgendaItemView: View {
                 item.assignedByProfileID = activeProfile?.clientID
             }
             modelContext.insert(item)
-            try? modelContext.save()
+            do {
+                try modelContext.save()
+            } catch {
+                ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            }
             notificationManager.scheduleNotifications(for: item)
         }
         isPresented = false
@@ -1606,7 +1714,11 @@ private struct ChildItemCard: View {
             item.updatedAt = .now
         }
         notificationManager.cancelNotifications(for: item)
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
         #if canImport(WatchConnectivity)
         watchManager.sendSyncSnapshot()
         #endif

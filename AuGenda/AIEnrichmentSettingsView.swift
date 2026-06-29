@@ -36,6 +36,12 @@ struct AIEnrichmentSettingsView: View {
     @AppStorage("ai.ollama.host")  private var ollamaHost: String = "http://localhost:11434"
     @AppStorage("ai.ollama.model") private var ollamaModel: String = "llama3.1:8b"
 
+    // Local AI only mode — enforces $0 budget by hiding all paid providers.
+    @AppStorage("ai.localOnlyMode") private var localOnlyMode: Bool = false
+
+    // Monthly AI budget cap (0 = unlimited)
+    @AppStorage("ai.maxMonthlyCostUSD") private var maxMonthlyCostUSD: Double = 0
+
     // Local UI state
     @State private var apiKeyDraft: String = ""
     @State private var apiKeyExists: Bool = false
@@ -54,6 +60,14 @@ struct AIEnrichmentSettingsView: View {
 
     private var activeProvider: AIProvider? {
         AIProvider(rawValue: activeProviderRaw)
+    }
+
+    /// Providers visible when local-only mode is active.
+    private var visibleProviders: [AIProvider] {
+        if localOnlyMode {
+            return AIProvider.allCases.filter { $0 == .appleFoundation || $0 == .ollama }
+        }
+        return AIProvider.allCases
     }
 
     var body: some View {
@@ -100,6 +114,11 @@ struct AIEnrichmentSettingsView: View {
         #endif
         .onAppear { syncKeyState() }
         .onChange(of: activeProviderRaw) { _, _ in syncKeyState(); testState = .idle }
+        .onChange(of: localOnlyMode) { _, isLocal in
+            if isLocal, let provider = activeProvider, provider != .appleFoundation && provider != .ollama {
+                activeProviderRaw = ""
+            }
+        }
         .alert(
             "Confirm provider",
             isPresented: $showDisclosure,
@@ -131,33 +150,55 @@ struct AIEnrichmentSettingsView: View {
                 }
             }
             .tint(Color.appAccent)
+
+            if aiEnabled {
+                Toggle(isOn: $localOnlyMode) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Local AI only").fontWeight(.medium)
+                        Text(localOnlyMode
+                             ? "On — only free, on-device or self-hosted providers."
+                             : "Off — all providers available.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(Color.appAccent)
+            }
         } footer: {
-            Text("AI enrichment auto-fills task metadata (difficulty axes, sub-tasks, time estimate) from your task title. Off by default. Even after enabling, no data leaves your device until you pick a provider AND enrich a task.")
+            if localOnlyMode {
+                Text("Local AI only mode hides paid providers. Uses Ollama (free, self-hosted) or Apple Foundation Models (on-device). No API costs.")
+            } else {
+                Text("AI enrichment auto-fills task metadata (difficulty axes, sub-tasks, time estimate) from your task title. Off by default. Even after enabling, no data leaves your device until you pick a provider AND enrich a task.")
+            }
         }
     }
 
     private var providerPickerSection: some View {
         Section {
             // Primary providers
-            ForEach(AIProvider.allCases.filter { !$0.isAdvanced }) { provider in
+            ForEach(visibleProviders.filter { !$0.isAdvanced }) { provider in
                 providerRow(provider)
             }
 
-            // Advanced disclosure
-            DisclosureGroup(isExpanded: $showAdvancedProviders) {
-                ForEach(AIProvider.allCases.filter(\.isAdvanced)) { provider in
-                    providerRow(provider)
-                }
-            } label: {
-                HStack {
-                    Text("Advanced providers").foregroundStyle(.secondary)
-                    Spacer()
+            // Advanced disclosure — only when not in local-only mode
+            if !localOnlyMode {
+                DisclosureGroup(isExpanded: $showAdvancedProviders) {
+                    ForEach(visibleProviders.filter(\.isAdvanced)) { provider in
+                        providerRow(provider)
+                    }
+                } label: {
+                    HStack {
+                        Text("Advanced providers").foregroundStyle(.secondary)
+                        Spacer()
+                    }
                 }
             }
         } header: {
             Text("Provider")
         } footer: {
-            Text("On-device and self-hosted providers never send your task data to a third-party cloud. Cloud providers require an API key, which is stored in the Keychain on this device only.")
+            Text(localOnlyMode
+                 ? "On-device and self-hosted providers only. No cloud API costs."
+                 : "On-device and self-hosted providers never send your task data to a third-party cloud. Cloud providers require an API key, which is stored in the Keychain on this device only.")
         }
     }
 
@@ -401,6 +442,32 @@ struct AIEnrichmentSettingsView: View {
                 Spacer()
                 Text(String(format: "$%.4f", ledger.thisMonthCostUSD))
                     .foregroundStyle(.secondary).monospacedDigit()
+            }
+            HStack {
+                Text("Monthly budget")
+                Spacer()
+                Picker("", selection: $maxMonthlyCostUSD) {
+                    Text("Unlimited").tag(0.0)
+                    Text("$5").tag(5.0)
+                    Text("$10").tag(10.0)
+                    Text("$20").tag(20.0)
+                    Text("$50").tag(50.0)
+                }
+                .pickerStyle(.menu)
+                .frame(maxWidth: 140)
+            }
+            if maxMonthlyCostUSD > 0 {
+                HStack {
+                    Text("Remaining")
+                    Spacer()
+                    Text(String(format: "$%.4f", max(0, maxMonthlyCostUSD - ledger.thisMonthCostUSD)))
+                        .foregroundStyle(
+                            ledger.thisMonthCostUSD >= maxMonthlyCostUSD
+                                ? Tokens.Color.warning
+                                : .secondary
+                        )
+                        .monospacedDigit()
+                }
             }
             Button(role: .destructive) {
                 ledger.clear()

@@ -61,6 +61,7 @@ struct WatchSyncPayload: Codable {
     var focusSessionEndsAt: Date?
     var pendingTaskCount: Int
     var lowFrictionTaskCount: Int   // tasks at friction ≤ 2, actionable now
+    var pendingRecovery: Bool
 }
 
 
@@ -97,9 +98,24 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
 
         let payload = buildPayload()
 
-        guard let encoded = try? JSONEncoder().encode(payload),
-              let dict = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any]
-        else { return }
+        let encoded: Data
+        do {
+            encoded = try JSONEncoder().encode(payload)
+        } catch {
+            logger.error("Failed to encode watch payload: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        let dict: [String: Any]
+        do {
+            guard let d = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] else {
+                logger.error("Failed to cast encoded payload to dictionary")
+                return
+            }
+            dict = d
+        } catch {
+            logger.error("Failed to serialize watch payload: \(error.localizedDescription, privacy: .public)")
+            return
+        }
 
         var message = dict
         message[WCMessageKey.messageType] = WCMessageType.syncSnapshot.rawValue
@@ -112,7 +128,11 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
             }
         } else {
             // Watch not reachable — queue via application context (delivered on next wake)
-            try? WCSession.default.updateApplicationContext(message)
+            do {
+                try WCSession.default.updateApplicationContext(message)
+            } catch {
+                logger.error("Failed to update application context: \(error.localizedDescription, privacy: .public)")
+            }
         }
 
         lastSyncDate = .now
@@ -144,7 +164,11 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
                 logger.error("WC send error: \(error.localizedDescription, privacy: .public)")
             })
         } else {
-            try? WCSession.default.updateApplicationContext(message)
+            do {
+                try WCSession.default.updateApplicationContext(message)
+            } catch {
+                logger.error("Failed to update application context: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 
@@ -158,7 +182,8 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
                 focusSessionActive: false,
                 focusSessionEndsAt: nil,
                 pendingTaskCount: 0,
-                lowFrictionTaskCount: 0
+                lowFrictionTaskCount: 0,
+                pendingRecovery: false
             )
         }
 
@@ -194,6 +219,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         let activePrefs = ActiveProfileManager.shared.activePreferences
         let energyLevel = activePrefs?.currentEnergyLevel ?? 3
         let focusManager = NotificationManager.shared
+        let pendingRecovery = InterruptionContext.currentActivity() != nil
 
         return WatchSyncPayload(
             nextAgendaItemTitle: next?.title ?? "Nothing scheduled",
@@ -203,7 +229,8 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
             focusSessionActive: focusManager.focusSessionActive,
             focusSessionEndsAt: focusManager.focusSessionEndsAt,
             pendingTaskCount: profileTasks.count,
-            lowFrictionTaskCount: lowFriction.count
+            lowFrictionTaskCount: lowFriction.count,
+            pendingRecovery: pendingRecovery
         )
     }
 
@@ -243,7 +270,11 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         item.isComplete = true
         item.completedAt = .now
         item.updatedAt = .now
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            ErrorBannerController.shared.show("Watch sync failed to save: \(error.localizedDescription)")
+        }
         sendSyncSnapshot()
     }
 
@@ -260,7 +291,11 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         guard let item = (try? context.fetch(descriptor))?.first else { return }
         item.snoozedUntil = Calendar.current.date(byAdding: .minute, value: minutes, to: .now)
         item.updatedAt = .now
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            ErrorBannerController.shared.show("Watch sync failed to save: \(error.localizedDescription)")
+        }
         sendSyncSnapshot()
     }
 
@@ -271,7 +306,11 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         guard let prefs = ActiveProfileManager.shared.activePreferences else { return }
         prefs.currentEnergyLevel = level
         prefs.updatedAt = .now
-        try? modelContext?.save()
+        do {
+            try modelContext?.save()
+        } catch {
+            ErrorBannerController.shared.show("Watch sync failed to save: \(error.localizedDescription)")
+        }
         sendSyncSnapshot()
     }
 }

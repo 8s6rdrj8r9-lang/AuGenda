@@ -18,6 +18,9 @@
 
 import Foundation
 import Combine
+import os.log
+
+private let logger = Logger(subsystem: "com.augenda.AuGenda", category: "AIPersonalization")
 
 // MARK: - Tone
 
@@ -193,32 +196,53 @@ final class PersonalizationStore: ObservableObject {
     // MARK: - Persistence (memory only — about-me + tone live in UserDefaults)
 
     private static var memoryURL: URL? {
-        guard let dir = try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        ) else { return nil }
+        let dir: URL
+        do {
+            dir = try FileManager.default.url(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            )
+        } catch {
+            logger.error("Failed to get Application Support directory: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
         return dir.appendingPathComponent("ai-personalization-memory.json")
     }
 
     private func loadMemory() {
         guard let url = Self.memoryURL,
-              FileManager.default.fileExists(atPath: url.path),
-              let data = try? Data(contentsOf: url),
-              let decoded = try? JSONDecoder().decode([PersonalizationContext.MemoryEntry].self, from: data) else {
+              FileManager.default.fileExists(atPath: url.path) else { return }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            logger.error("Failed to read personalization memory: \(error.localizedDescription, privacy: .public)")
             return
         }
-        self.memory = decoded
+        do {
+            self.memory = try JSONDecoder().decode([PersonalizationContext.MemoryEntry].self, from: data)
+        } catch {
+            logger.error("Failed to decode personalization memory: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func saveMemory() {
         guard let url = Self.memoryURL else { return }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(memory) else { return }
-        // Recent task titles are personal — protect at rest (readable after first
-        // unlock so background enrichment can still append). See audit P1.
-        try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        let data: Data
+        do {
+            data = try encoder.encode(memory)
+        } catch {
+            logger.error("Failed to encode personalization memory: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        do {
+            try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        } catch {
+            logger.error("Failed to write personalization memory: \(error.localizedDescription, privacy: .public)")
+        }
     }
 }

@@ -370,6 +370,16 @@ final class ProfilePreferences {
         }
     }
 
+    /// THE single density resolution rule: an explicit pin wins; otherwise
+    /// derive from live energy. Every surface (Home, watch, selector hydrate,
+    /// onboarding routing) reads this instead of re-deriving
+    /// `pinned ?? autoFrom(energy)` by hand. Computed only — no stored
+    /// attribute, so the CloudKit-additive schema contract is preserved.
+    /// MUST stay in sync with the iOS + watch ProfileModels copies.
+    var effectiveDensity: DensityMode {
+        densityPinned ?? .autoFrom(energyLevel: currentEnergyLevel)
+    }
+
     // MARK: Preset factory
 
     /// Build a new ProfilePreferences pre-filled with defaults for the given neurotypes.

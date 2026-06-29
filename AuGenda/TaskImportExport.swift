@@ -20,6 +20,11 @@ import Foundation
 import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
+import CryptoKit
+import Security
+import os.log
+
+private let logger = Logger(subsystem: "com.augenda.AuGenda", category: "TaskImportExport")
 
 // MARK: - Format
 
@@ -157,8 +162,14 @@ enum TaskExporter {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(payload),
-              let str = String(data: data, encoding: .utf8) else { return "{}" }
+        let data: Data
+        do {
+            data = try encoder.encode(payload)
+        } catch {
+            logger.error("Failed to encode JSON payload: \(error.localizedDescription, privacy: .public)")
+            return "{}"
+        }
+        guard let str = String(data: data, encoding: .utf8) else { return "{}" }
         return str
     }
 
@@ -295,6 +306,83 @@ enum TaskExporter {
     private static func plainTextString(_ tasks: [ExportedTask]) -> String {
         tasks.map { $0.title }.joined(separator: "\n") + "\n"
     }
+
+    // MARK: - Encryption
+    //
+    // AES-256-GCM with a user-provided password. Salt is prepended to the
+    // ciphertext so the same password can decrypt without external state.
+
+    static func encrypt(_ payload: String, password: String) -> String? {
+        guard let data = payload.data(using: .utf8) else { return nil }
+        guard let passwordData = password.data(using: .utf8) else { return nil }
+
+        // Generate random salt
+        var salt = Data(count: 32)
+        _ = salt.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) }
+
+        // Derive key: password + salt → SHA-256 → SymmetricKey
+        var combined = passwordData
+        combined.append(salt)
+        let hash = SHA256.hash(data: combined)
+        let key = SymmetricKey(data: Data(hash))
+
+        // Encrypt
+        let nonce = AES.GCM.Nonce()
+        let sealedBox: AES.GCM.SealedBox
+        do {
+            sealedBox = try AES.GCM.seal(data, using: key, nonce: nonce)
+        } catch {
+            logger.error("AES encryption failed: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+
+        // Combine: salt + nonce + ciphertext + tag
+        var result = salt
+        result.append(contentsOf: nonce)
+        result.append(sealedBox.ciphertext)
+        result.append(sealedBox.tag)
+        return result.base64EncodedString()
+    }
+
+    static func decrypt(_ base64String: String, password: String) -> String? {
+        guard let combined = Data(base64Encoded: base64String) else { return nil }
+        guard combined.count > 60 else { return nil }
+
+        let salt = combined.prefix(32)
+        let nonceData = combined[32..<44]
+        let ciphertext = combined[44..<(combined.count - 16)]
+        let tag = combined.suffix(16)
+
+        let nonce: AES.GCM.Nonce
+        do {
+            nonce = try AES.GCM.Nonce(data: nonceData)
+        } catch {
+            logger.error("Invalid nonce data: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+
+        guard let passwordData = password.data(using: .utf8) else { return nil }
+        var combinedData = passwordData
+        combinedData.append(salt)
+        let hash = SHA256.hash(data: combinedData)
+        let key = SymmetricKey(data: Data(hash))
+
+        let box: AES.GCM.SealedBox
+        do {
+            box = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag)
+        } catch {
+            logger.error("Invalid sealed box: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+        let decrypted: Data
+        do {
+            decrypted = try AES.GCM.open(box, using: key)
+        } catch {
+            logger.error("AES decryption failed: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+        return String(data: decrypted, encoding: .utf8)
+    }
 }
 
 // MARK: - Importer
@@ -330,12 +418,18 @@ enum TaskImporter {
         guard let data = text.data(using: .utf8) else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        if let payload = try? decoder.decode(TaskExportPayload.self, from: data) {
+        do {
+            let payload = try decoder.decode(TaskExportPayload.self, from: data)
             return payload.tasks.map { $0.toAgendaTask() }
+        } catch {
+            logger.warning("Failed to decode TaskExportPayload, trying bare array: \(error.localizedDescription, privacy: .public)")
         }
         // Tolerate a bare task array too (no envelope)
-        if let tasks = try? decoder.decode([ExportedTask].self, from: data) {
+        do {
+            let tasks = try decoder.decode([ExportedTask].self, from: data)
             return tasks.map { $0.toAgendaTask() }
+        } catch {
+            logger.warning("Failed to decode bare task array: \(error.localizedDescription, privacy: .public)")
         }
         return []
     }

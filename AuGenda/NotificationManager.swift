@@ -70,6 +70,8 @@ final class NotificationManager: NSObject, ObservableObject {
     @Published var focusSessionActive: Bool = false
     @Published var focusSessionEndsAt: Date? = nil
 
+    var modelContext: ModelContext? = nil
+
     private let center = UNUserNotificationCenter.current()
 
     private override init() {
@@ -294,11 +296,24 @@ final class NotificationManager: NSObject, ObservableObject {
 
     // MARK: - Focus Session
 
-    func startFocusSession(durationMinutes: Int, taskTitle: String = "") {
+    func startFocusSession(durationMinutes: Int, taskTitle: String = "", taskID: UUID? = nil) {
         let endsAt = Date.now.addingTimeInterval(Double(durationMinutes) * 60)
         focusSessionActive = true
         focusSessionEndsAt = endsAt
-
+        
+        if let ctx = modelContext {
+            let session = FocusSession(
+                plannedDurationMinutes: durationMinutes,
+                taskID: taskID,
+                taskTitle: taskTitle,
+                profileID: ActiveProfileManager.shared.activeProfile?.clientID
+            )
+            ctx.insert(session)
+            do { try ctx.save() } catch {
+                logger.error("Failed to save focus session: \(error.localizedDescription)")
+            }
+        }
+        
         // Notify Watch
         #if canImport(WatchConnectivity)
         WatchConnectivityManager.shared.sendFocusStarted(endsAt: endsAt)
@@ -374,6 +389,22 @@ final class NotificationManager: NSObject, ObservableObject {
     func endFocusSession() {
         focusSessionActive = false
         focusSessionEndsAt = nil
+        
+        if let ctx = modelContext {
+            let activeRaw = FocusSessionState.active.rawValue
+            let descriptor = FetchDescriptor<FocusSession>(
+                predicate: #Predicate { $0.stateRaw == activeRaw }
+            )
+            if let active = (try? ctx.fetch(descriptor))?.first {
+                active.state = .completed
+                active.endTime = .now
+                active.wasCompleted = true
+                do { try ctx.save() } catch {
+                    logger.error("Failed to complete focus session: \(error.localizedDescription)")
+                }
+            }
+        }
+        
         center.removePendingNotificationRequests(withIdentifiers: [
             "focus-session-end",
             "focus-session-halfway",
@@ -383,6 +414,22 @@ final class NotificationManager: NSObject, ObservableObject {
         #if canImport(WatchConnectivity)
         WatchConnectivityManager.shared.sendFocusEnded()
         #endif
+    }
+
+    func recordInterruption(reason: String = "") {
+        guard let ctx = modelContext else { return }
+        let activeRaw = FocusSessionState.active.rawValue
+        let descriptor = FetchDescriptor<FocusSession>(
+            predicate: #Predicate { $0.stateRaw == activeRaw }
+        )
+        if let active = (try? ctx.fetch(descriptor))?.first {
+            active.recordInterruption(reason: reason)
+            do {
+                try ctx.save()
+            } catch {
+                logger.error("Failed to record interruption: \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: - Hyperfocus risk timer

@@ -41,7 +41,11 @@ struct InboxView: View {
                                 for i in indexSet {
                                     unprocessed[i].state = .archived
                                 }
-                                try? modelContext.save()
+                                do {
+                                    try modelContext.save()
+                                } catch {
+                                    ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+                                }
                             }
                         } header: {
                             HStack {
@@ -436,19 +440,31 @@ struct InboxItemReviewSheet: View {
         modelContext.insert(task)
         item.state = .organized
         item.resolvedTaskID = task.clientID
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
         dismiss()
     }
 
     private func discard() {
         item.state = .archived
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
         dismiss()
     }
 
     // MARK: - AI enrichment
 
     private func runEnrich() async {
+        guard AIUsageLedger.shared.canEnrich() else {
+            ErrorBannerController.shared.show("AI enrichment paused — monthly budget reached")
+            return
+        }
         guard let provider = AIProvider(rawValue: activeProviderRaw),
               let enricher = AIEnricherRegistry.enricher(for: provider)
         else {
@@ -499,7 +515,11 @@ struct InboxItemReviewSheet: View {
         item.aiSuggestedSensoryLoad    = sensoryLoad
         item.aiSuggestedSocialLoad     = socialLoad
         item.aiSuggestedContextTag     = contextTag.isEmpty ? nil : contextTag
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
 
         // Show the difficulty section so the user sees what was suggested.
         showDifficultyDetail = true

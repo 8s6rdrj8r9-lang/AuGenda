@@ -6,9 +6,12 @@
 	     code-signing flips this to "production" for App Store archives;
 	     manual signing must be verified before TestFlight upload. -->
 	<key>aps-environment</key>
-	<string>development</string>
+	<string>production</string>
 	<key>com.apple.developer.aps-environment</key>
-	<string>development</string>
+	<string>production</string>
+
+	<key>com.apple.developer.weatherkit</key>
+	<true/>
 
 	<!-- CloudKit container identifier. Must match AppContainer.swift's
 	     cloudKitContainerID. Reverse-DNS prefix should reflect your real

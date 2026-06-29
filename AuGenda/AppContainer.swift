@@ -25,25 +25,50 @@ import SwiftData
 /// Until this is real, CloudKit sync silently fails on device installs.
 private let cloudKitContainerID = "iCloud.com.augenda.AuGenda"   // ⚠️ placeholder
 
+// MARK: - Schema Versioning
+
+enum AuGendaSchemaV1: VersionedSchema {
+    static var versionIdentifier = Schema.Version(1, 0, 0)
+    static var models: [any PersistentModel.Type] = [
+        AgendaItem.self, SubTask.self, AgendaTask.self, TaskStep.self,
+        InboxItem.self, UserPreferences.self, Block.self, BlockTask.self,
+        BundleTemplate.self, BundleTemplateItem.self, AttachedBundle.self,
+        AttachedBundleItem.self, Profile.self, ProfilePreferences.self
+    ]
+}
+
+enum AuGendaSchemaV2: VersionedSchema {
+    static var versionIdentifier = Schema.Version(2, 0, 0)
+    static var models: [any PersistentModel.Type] = [
+        AgendaItem.self, SubTask.self, AgendaTask.self, TaskStep.self,
+        InboxItem.self, UserPreferences.self, Block.self, BlockTask.self,
+        BundleTemplate.self, BundleTemplateItem.self, AttachedBundle.self,
+        AttachedBundleItem.self, Profile.self, ProfilePreferences.self,
+        FocusSession.self, TaskRelationship.self, Note.self
+    ]
+}
+
+enum AuGendaMigrationPlan: SchemaMigrationPlan {
+    static var schemas: [any VersionedSchema.Type] {
+        [AuGendaSchemaV1.self, AuGendaSchemaV2.self]
+    }
+    
+    static var stages: [MigrationStage] {
+        [migrateV1toV2]
+    }
+    
+    static let migrateV1toV2 = MigrationStage.lightweight(
+        fromVersion: AuGendaSchemaV1.self,
+        toVersion: AuGendaSchemaV2.self
+    )
+}
+
 enum AppContainer {
 
     /// Shared schema — keep in sync across every container variant below.
-    private static let schemaModels: [any PersistentModel.Type] = [
-        AgendaItem.self,
-        SubTask.self,
-        AgendaTask.self,
-        TaskStep.self,
-        InboxItem.self,
-        UserPreferences.self,
-        Block.self,
-        BlockTask.self,
-        BundleTemplate.self,
-        BundleTemplateItem.self,
-        AttachedBundle.self,
-        AttachedBundleItem.self,
-        Profile.self,
-        ProfilePreferences.self
-    ]
+    private static var schemaModels: [any PersistentModel.Type] {
+        AuGendaSchemaV2.models
+    }
 
     /// Production container — file-backed + CloudKit private database.
     /// Use this once the real CloudKit container ID is wired in (see the
@@ -58,9 +83,10 @@ enum AppContainer {
         )
 
         do {
-            return try ModelContainer(for: schema, configurations: [config])
+            return try ModelContainer(for: schema, migrationPlan: AuGendaMigrationPlan.self, configurations: [config])
         } catch {
-            fatalError("Failed to create production ModelContainer: \(error)")
+            // CloudKit not active yet — fall back to local dev container
+            return Self.dev
         }
     }()
 
@@ -81,7 +107,7 @@ enum AppContainer {
         )
 
         do {
-            return try ModelContainer(for: schema, configurations: [config])
+            return try ModelContainer(for: schema, migrationPlan: AuGendaMigrationPlan.self, configurations: [config])
         } catch {
             // Last resort — fall back to in-memory rather than crashing,
             // so the app still launches in some form if persistent setup
@@ -99,9 +125,10 @@ enum AppContainer {
         )
 
         do {
-            return try ModelContainer(for: schema, configurations: [config])
+            return try ModelContainer(for: schema, migrationPlan: AuGendaMigrationPlan.self, configurations: [config])
         } catch {
-            fatalError("Failed to create test ModelContainer: \(error)")
+            // Last resort — fall back to dev
+            return Self.dev
         }
     }
 

@@ -57,6 +57,7 @@ struct TaskBacklogView: View {
     @State private var exportDocument = TaskTextFileDocument()
     @State private var exportFormat: TaskExportFormat = .markdown
     @State private var importFeedback: String? = nil
+    @State private var importExportPassword: String = ""
 
     private var activeProfileID: UUID? { profileManager.activeProfile?.clientID }
     private var activePrefs: ProfilePreferences? { profileManager.activePreferences }
@@ -81,8 +82,8 @@ struct TaskBacklogView: View {
             return profileTasks
                 .filter {
                     $0.isActionable &&
-                    $0.frictionLevel <= max(energyLevel, 2) &&
-                    $0.energyRequired <= energyLevel
+                    !$0.isBlocked(in: modelContext) &&
+                    $0.difficultyRank <= energyLevel * 2
                 }
                 .sorted { $0.ndPriorityScore > $1.ndPriorityScore }
         case .waiting:
@@ -129,7 +130,13 @@ struct TaskBacklogView: View {
     private func beginExport(format: TaskExportFormat) {
         let allForProfile = profileTasks
             .sorted { $0.sortOrder < $1.sortOrder }
-        let payload = TaskExporter.export(allForProfile, as: format)
+        var payload = TaskExporter.export(allForProfile, as: format)
+
+        if !importExportPassword.isEmpty {
+            if let encrypted = TaskExporter.encrypt(payload, password: importExportPassword) {
+                payload = encrypted
+            }
+        }
 
         exportFormat = format
         exportDocument = TaskTextFileDocument(text: payload)
@@ -143,6 +150,7 @@ struct TaskBacklogView: View {
         switch result {
         case .failure(let error):
             importFeedback = "Import failed: \(error.localizedDescription)"
+            ErrorBannerController.shared.show("Import failed: \(error.localizedDescription)")
 
         case .success(let urls):
             guard let url = urls.first else { return }
@@ -153,6 +161,12 @@ struct TaskBacklogView: View {
             defer { if needsScope { url.stopAccessingSecurityScopedResource() } }
 
             guard let format = TaskImporter.detectFormat(filename: url.lastPathComponent) else {
+                let ext = url.lastPathComponent.lowercased()
+                if ext.hasSuffix(".yaml") || ext.hasSuffix(".yml") {
+                    // Bypass content-type restriction — YAML is plain text
+                    importYAML(url: url)
+                    return
+                }
                 importFeedback = "Couldn't detect the file format from the extension. Supported: .json .yaml .yml .csv .md .markdown .txt"
                 return
             }
@@ -162,19 +176,89 @@ struct TaskBacklogView: View {
                 return
             }
 
-            let imported = TaskImporter.parse(text, as: format)
+            var imported = TaskImporter.parse(text, as: format)
+            if imported.isEmpty, !importExportPassword.isEmpty {
+                if let decrypted = TaskExporter.decrypt(text, password: importExportPassword) {
+                    imported = TaskImporter.parse(decrypted, as: format)
+                }
+            }
             guard !imported.isEmpty else {
                 importFeedback = "No tasks found in the file."
                 return
             }
 
             let profileID = profileManager.activeProfile?.clientID
+            var insertedCount = 0
             for task in imported {
+                let taskID = task.clientID
+                let dupDescriptor = FetchDescriptor<AgendaTask>(
+                    predicate: #Predicate { $0.clientID == taskID }
+                )
+                let existing = (try? modelContext.fetch(dupDescriptor))?.first
+                if existing != nil {
+                    continue
+                }
                 task.assignedToProfileID = profileID
                 modelContext.insert(task)
+                insertedCount += 1
             }
-            try? modelContext.save()
-            importFeedback = "Imported \(imported.count) task\(imported.count == 1 ? "" : "s") from \(format.displayName)."
+            do {
+                try modelContext.save()
+                let skippedCount = imported.count - insertedCount
+                if skippedCount > 0 {
+                    importFeedback = "Imported \(insertedCount) task\(insertedCount == 1 ? "" : "s"). Skipped \(skippedCount) duplicate\(skippedCount == 1 ? "" : "s")."
+                } else {
+                    importFeedback = "Imported \(insertedCount) task\(insertedCount == 1 ? "" : "s") from \(format.displayName)."
+                }
+            } catch {
+                importFeedback = "Import saved to memory but couldn't persist: \(error.localizedDescription)"
+                ErrorBannerController.shared.show("Import failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func importYAML(url: URL) {
+        guard let data = try? Data(contentsOf: url),
+              let text = String(data: data, encoding: .utf8) else {
+            importFeedback = "Couldn't read the file."
+            return
+        }
+        var imported = TaskImporter.parse(text, as: .yaml)
+        if imported.isEmpty, !importExportPassword.isEmpty {
+            if let decrypted = TaskExporter.decrypt(text, password: importExportPassword) {
+                imported = TaskImporter.parse(decrypted, as: .yaml)
+            }
+        }
+        guard !imported.isEmpty else {
+            importFeedback = "No tasks found in the file."
+            return
+        }
+        let profileID = profileManager.activeProfile?.clientID
+        var insertedCount = 0
+        for task in imported {
+            let taskID = task.clientID
+            let dupDescriptor = FetchDescriptor<AgendaTask>(
+                predicate: #Predicate { $0.clientID == taskID }
+            )
+            let existing = (try? modelContext.fetch(dupDescriptor))?.first
+            if existing != nil {
+                continue
+            }
+            task.assignedToProfileID = profileID
+            modelContext.insert(task)
+            insertedCount += 1
+        }
+        do {
+            try modelContext.save()
+            let skippedCount = imported.count - insertedCount
+            if skippedCount > 0 {
+                importFeedback = "Imported \(insertedCount) task\(insertedCount == 1 ? "" : "s"). Skipped \(skippedCount) duplicate\(skippedCount == 1 ? "" : "s")."
+            } else {
+                importFeedback = "Imported \(insertedCount) task\(insertedCount == 1 ? "" : "s") from YAML."
+            }
+        } catch {
+            importFeedback = "Import saved to memory but couldn't persist: \(error.localizedDescription)"
+            ErrorBannerController.shared.show("Import failed: \(error.localizedDescription)")
         }
     }
 
@@ -270,6 +354,10 @@ struct TaskBacklogView: View {
                                 Label("From file…", systemImage: "tray.and.arrow.down")
                             }
                         }
+                        Section {
+                            SecureField("Password (optional)", text: $importExportPassword)
+                                .textContentType(.password)
+                        }
                     } label: {
                         Image(systemName: "tray.and.arrow.up")
                             .font(.title2)
@@ -306,7 +394,9 @@ struct TaskBacklogView: View {
             }
             .fileImporter(
                 isPresented: $showImporter,
-                allowedContentTypes: [.json, .commaSeparatedText, .plainText, .text],
+                // .data lets .yaml/.yml through — the extension check in
+                // handleImportResult filters to supported formats.
+                allowedContentTypes: [.json, .commaSeparatedText, .plainText, .text, .data],
                 allowsMultipleSelection: false
             ) { result in
                 handleImportResult(result)
@@ -479,6 +569,7 @@ struct AgendaTaskCard: View {
     let task: AgendaTask
     var showWaitingOn: Bool = false
     let onTap: () -> Void
+    @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         Button(action: onTap) {
@@ -548,6 +639,19 @@ struct AgendaTaskCard: View {
                         }
                     }
                     .opacity(0.8)
+
+                    // ── Blocked indicator ──
+                    if task.isBlocked(in: modelContext) {
+                        HStack(spacing: Tokens.Spacing.xs) {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(Tokens.Color.warning)
+                            Text("Blocked")
+                                .font(Tokens.Typography.caption)
+                                .foregroundColor(Tokens.Color.warning)
+                        }
+                        .opacity(0.8)
+                    }
 
                     // ── Waiting-on row (Waiting filter only) ──
                     if showWaitingOn && !task.waitingOn.isEmpty {
@@ -944,7 +1048,11 @@ struct AddTaskView: View {
             }
             modelContext.insert(task)
         }
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
         isPresented = false
     }
 }
@@ -1055,6 +1163,10 @@ struct BrainDumpView: View {
                     Divider()
                     HStack {
                         Button {
+                            if voiceUnavailable {
+                                ErrorBannerController.shared.show("Voice input is not available on this device")
+                                return
+                            }
                             isRecording ? stopRecording() : startRecording()
                         } label: {
                             HStack(spacing: 6) {
@@ -1092,6 +1204,7 @@ struct BrainDumpView: View {
             .onAppear {
                 editorFocused = true
                 #if os(iOS)
+                voiceUnavailable = !(SFSpeechRecognizer(locale: .autoupdatingCurrent)?.isAvailable ?? false)
                 requestSpeechPermission()
                 #endif
             }
@@ -1122,7 +1235,11 @@ struct BrainDumpView: View {
             item.assignedToProfileID = profileID
             modelContext.insert(item)
         }
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
         isPresented = false
     }
 

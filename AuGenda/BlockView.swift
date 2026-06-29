@@ -57,7 +57,11 @@ final class BlockManager: NSObject, ObservableObject, CLLocationManagerDelegate 
         block.updatedAt = .now
         currentBlock = block
 
-        try? modelContext?.save()
+        do {
+            try modelContext?.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
 
         // Check weather if outdoor block
         if block.type.isOutdoor && block.weatherCheckEnabled {
@@ -93,7 +97,11 @@ final class BlockManager: NSObject, ObservableObject, CLLocationManagerDelegate 
             currentBlock = nil
         }
 
-        try? modelContext?.save()
+        do {
+            try modelContext?.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
         weatherSuggestions = []
     }
 
@@ -110,7 +118,11 @@ final class BlockManager: NSObject, ObservableObject, CLLocationManagerDelegate 
             block.attachedBundles?.append(attached)
         }
 
-        try? modelContext?.save()
+        do {
+            try modelContext?.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Streak tracking
@@ -312,7 +324,11 @@ final class BlockManager: NSObject, ObservableObject, CLLocationManagerDelegate 
             }
         }
 
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
     }
 
     private func defaultTasks(for type: BlockType) -> [String] {
@@ -762,7 +778,11 @@ struct BlockTaskRow: View {
                     task.isComplete.toggle()
                     task.completedAt = task.isComplete ? .now : nil
                 }
-                try? modelContext.save()
+                do {
+                    try modelContext.save()
+                } catch {
+                    ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+                }
             } label: {
                 Image(systemName: task.isComplete ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
@@ -903,7 +923,11 @@ struct AttachedBundleCard: View {
                 HStack(spacing: 10) {
                     Button {
                         item.isComplete.toggle()
-                        try? modelContext.save()
+                        do {
+                            try modelContext.save()
+                        } catch {
+                            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+                        }
                     } label: {
                         Image(systemName: item.isComplete ? "checkmark.circle.fill" : "circle")
                             .foregroundStyle(item.isComplete ? Color.appAccent : .secondary)

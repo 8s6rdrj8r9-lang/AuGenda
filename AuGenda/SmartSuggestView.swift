@@ -16,6 +16,7 @@ struct SmartSuggestView: View {
     @EnvironmentObject private var profileManager: ActiveProfileManager
     @Query(filter: #Predicate<AgendaTask> { !$0.isComplete && !$0.isAbandoned })
     private var allTasks: [AgendaTask]
+    @Environment(\.modelContext) private var modelContext
 
     @State private var skipIndex: Int = 0
     @State private var selectedTask: AgendaTask? = nil
@@ -38,8 +39,8 @@ struct SmartSuggestView: View {
                 }()
                 return assignedOK &&
                     task.isActionable &&
-                    task.frictionLevel <= energyLevel &&
-                    task.energyRequired <= energyLevel
+                    !task.isBlocked(in: modelContext) &&
+                    task.difficultyRank <= energyLevel * 2
             }
             .sorted { $0.ndPriorityScore > $1.ndPriorityScore }
     }

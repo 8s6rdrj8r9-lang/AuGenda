@@ -734,29 +734,27 @@ struct ProfileSetupView: View {
         // before this view ran. Single source of truth: the @AppStorage
         // key. Clear it after consumption so a later return through this
         // flow (unlikely but possible) doesn't pick up a stale value.
+        // Option A: the parked capacity choice becomes ENERGY, not a pin.
+        // First launch should not silently pin every new profile forever —
+        // the density picker is the only pinning surface.
         if let mode = pendingMode {
-            prefs.densityPinned = mode
-            prefs.currentEnergyLevel = energyLevelForMode(mode)
+            prefs.currentEnergyLevel = mode.representativeEnergyLevel
         }
         pendingDensityRaw = ""
 
         profile.preferences = prefs
         modelContext.insert(profile)
         modelContext.insert(prefs)
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
 
         profileManager.switchTo(profile)
         isPresented = false
     }
 
-    private func energyLevelForMode(_ mode: DensityMode) -> Int {
-        switch mode {
-        case .survival:   return 1
-        case .low:        return 2
-        case .functional: return 3
-        case .high:       return 4
-        }
-    }
 }
 
 // MARK: - SetupAvatarPreview (private, used only in setup step 2)
@@ -986,6 +984,10 @@ struct ProfileSettingsView: View {
                 Toggle("Hyperfocus guard", isOn: $prefs.hyperfocusGuard)
                     .tint(Color.appAccent)
                     .onChange(of: prefs.hyperfocusGuard) { _, _ in save() }
+
+                Toggle("Show check-in nudges", isOn: $prefs.showCheckInNudges)
+                    .tint(Color.appAccent)
+                    .onChange(of: prefs.showCheckInNudges) { _, _ in save() }
             } header: {
                 Text("Energy & Executive Function")
             } footer: {
@@ -1059,10 +1061,19 @@ struct ProfileSettingsView: View {
 
             // Display
             Section {
+                Picker("UI Size", selection: $prefs.uiScale) {
+                    Text("Normal").tag(1.0)
+                    Text("Large").tag(1.25)
+                    Text("Extra Large").tag(1.5)
+                }
+                .onChange(of: prefs.uiScale) { _, _ in save() }
+
                 Toggle("Minimal mode",        isOn: $prefs.minimalMode)         .tint(Color.appAccent).onChange(of: prefs.minimalMode)         { _, _ in save() }
                 Toggle("Larger touch targets", isOn: $prefs.largeTouchTargets)   .tint(Color.appAccent).onChange(of: prefs.largeTouchTargets)   { _, _ in save() }
                 Toggle("Sensory context tags", isOn: $prefs.sensoryContextTagsEnabled).tint(Color.appAccent).onChange(of: prefs.sensoryContextTagsEnabled) { _, _ in save() }
                 Toggle("High contrast",        isOn: $prefs.highContrastMode)    .tint(Color.appAccent).onChange(of: prefs.highContrastMode)    { _, _ in save() }
+                Toggle("Low stimulation mode", isOn: $prefs.lowStimulationMode) .tint(Color.appAccent).onChange(of: prefs.lowStimulationMode) { _, _ in save() }
+                Toggle("Reduce motion",        isOn: $prefs.reduceMotion)        .tint(Color.appAccent).onChange(of: prefs.reduceMotion)        { _, _ in save() }
             } header: { Text("Display") }
 
             // Reset
@@ -1120,7 +1131,11 @@ struct ProfileSettingsView: View {
 
     private func save() {
         prefs.updatedAt = .now
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
     }
 }
 
@@ -1192,7 +1207,11 @@ private struct NeurotypeEditorSheet: View {
                     Button("Save") {
                         profile.neurotypes = Array(selected)
                         profile.updatedAt = .now
-                        try? modelContext.save()
+                        do {
+                            try modelContext.save()
+                        } catch {
+                            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+                        }
                         onSave()
                         isPresented = false
                     }

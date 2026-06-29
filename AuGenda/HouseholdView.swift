@@ -249,7 +249,11 @@ private struct HouseholdItemRow: View {
             item.updatedAt = .now
         }
         notificationManager.cancelNotifications(for: item)
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
         #if canImport(WatchConnectivity)
         watchManager.sendSyncSnapshot()
         #endif

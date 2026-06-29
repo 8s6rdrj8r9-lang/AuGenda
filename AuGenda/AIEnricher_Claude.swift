@@ -13,6 +13,9 @@
 // API ref: https://docs.anthropic.com/en/api/messages
 
 import Foundation
+import os.log
+
+private let logger = Logger(subsystem: "com.augenda.AuGenda", category: "AIEnricherClaude")
 
 private struct ClaudeRequest: Encodable {
     let model: String
@@ -138,9 +141,15 @@ struct ClaudeEnricher: AITaskEnricher {
         } catch {
             // Strip fences and retry (Claude usually obeys but defensive)
             let stripped = Self.stripCodeFences(text)
-            guard let strippedData = stripped.data(using: .utf8),
-                  let retry = try? JSONDecoder().decode(TaskEnrichment.self, from: strippedData) else {
+            guard let strippedData = stripped.data(using: .utf8) else {
                 throw AIEnricherError.invalidResponse(detail: "inner decode failed")
+            }
+            let retry: TaskEnrichment
+            do {
+                retry = try JSONDecoder().decode(TaskEnrichment.self, from: strippedData)
+            } catch {
+                logger.error("Claude inner decode failed after stripping fences: \(error.localizedDescription, privacy: .public)")
+                throw AIEnricherError.invalidResponse(detail: "inner decode failed: \(error.localizedDescription)")
             }
             enrichment = retry
         }

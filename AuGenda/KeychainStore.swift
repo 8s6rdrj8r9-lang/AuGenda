@@ -23,6 +23,9 @@
 
 import Foundation
 import Security
+import os.log
+
+private let logger = Logger(subsystem: "com.augenda.AuGenda", category: "KeychainStore")
 
 enum KeychainStore {
 
@@ -91,13 +94,26 @@ enum KeychainStore {
             return
         case errSecItemNotFound:
             // Insert new
-            let queryAdd: [String: Any] = [
+            var queryAdd: [String: Any] = [
                 kSecClass as String:        kSecClassGenericPassword,
                 kSecAttrService as String:  service,
                 kSecAttrAccount as String:  provider.rawValue,
                 kSecValueData as String:    data,
                 kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             ]
+            #if os(iOS)
+            if #available(iOS 15.0, *) {
+                var error: Unmanaged<CFError>?
+                if let accessControl = SecAccessControlCreateWithFlags(
+                    kCFAllocatorDefault,
+                    kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+                    .biometryCurrentSet,
+                    &error
+                ) {
+                    queryAdd[kSecAttrAccessControl as String] = accessControl
+                }
+            }
+            #endif
             let addStatus = SecItemAdd(queryAdd as CFDictionary, nil)
             guard addStatus == errSecSuccess else {
                 throw KeychainError.osStatus(addStatus)
@@ -124,7 +140,153 @@ enum KeychainStore {
     /// the value — Settings reads the masked form via `get` only when it
     /// needs to display the obscured input field.
     static func hasKey(for provider: AIProvider) -> Bool {
-        (try? get(for: provider)) != nil
+        do {
+            return try get(for: provider) != nil
+        } catch {
+            logger.error("Keychain hasKey check failed: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+    }
+
+    // MARK: - String-based non-throwing API (for tests and general use)
+
+    static func get(for account: String) -> String? {
+        do {
+            return try get(account: account)
+        } catch {
+            logger.error("Keychain get failed: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+
+    static func set(_ value: String, for account: String) {
+        do {
+            try set(value: value, account: account)
+        } catch {
+            logger.error("Keychain set failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    static func remove(for account: String) {
+        do {
+            try remove(account: account)
+        } catch {
+            logger.error("Keychain remove failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    static func removeAll(for account: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    // MARK: - Internal throwing implementations
+
+    private static func get(account: String) throws -> String? {
+        let query: [String: Any] = [
+            kSecClass as String:        kSecClassGenericPassword,
+            kSecAttrService as String:  service,
+            kSecAttrAccount as String:  account,
+            kSecMatchLimit as String:   kSecMatchLimitOne,
+            kSecReturnData as String:   true
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        switch status {
+        case errSecSuccess:
+            guard let data = result as? Data,
+                  let str = String(data: data, encoding: .utf8) else {
+                throw KeychainError.decode
+            }
+            return str
+        case errSecItemNotFound:
+            return nil
+        default:
+            throw KeychainError.osStatus(status)
+        }
+    }
+
+    private static func set(value: String, account: String) throws {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            try remove(account: account)
+            return
+        }
+
+        guard let data = trimmed.data(using: .utf8) else {
+            throw KeychainError.encode
+        }
+
+        let queryUpdate: [String: Any] = [
+            kSecClass as String:        kSecClassGenericPassword,
+            kSecAttrService as String:  service,
+            kSecAttrAccount as String:  account
+        ]
+        let attrsUpdate: [String: Any] = [
+            kSecValueData as String:    data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        ]
+        let updateStatus = SecItemUpdate(queryUpdate as CFDictionary, attrsUpdate as CFDictionary)
+
+        switch updateStatus {
+        case errSecSuccess:
+            return
+        case errSecItemNotFound:
+            var queryAdd: [String: Any] = [
+                kSecClass as String:        kSecClassGenericPassword,
+                kSecAttrService as String:  service,
+                kSecAttrAccount as String:  account,
+                kSecValueData as String:    data,
+                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            ]
+            #if os(iOS)
+            if #available(iOS 15.0, *) {
+                var error: Unmanaged<CFError>?
+                if let accessControl = SecAccessControlCreateWithFlags(
+                    kCFAllocatorDefault,
+                    kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+                    .biometryCurrentSet,
+                    &error
+                ) {
+                    queryAdd[kSecAttrAccessControl as String] = accessControl
+                }
+            }
+            #endif
+            let addStatus = SecItemAdd(queryAdd as CFDictionary, nil)
+            if addStatus == errSecSuccess { return }
+            // Fallback: retry without biometry access control (simulator-safe)
+            let queryAddNoBio: [String: Any] = [
+                kSecClass as String:        kSecClassGenericPassword,
+                kSecAttrService as String:  service,
+                kSecAttrAccount as String:  account,
+                kSecValueData as String:    data,
+                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            ]
+            let addStatusNoBio = SecItemAdd(queryAddNoBio as CFDictionary, nil)
+            guard addStatusNoBio == errSecSuccess else {
+                throw KeychainError.osStatus(addStatusNoBio)
+            }
+        default:
+            throw KeychainError.osStatus(updateStatus)
+        }
+    }
+
+    private static func remove(account: String) throws {
+        let query: [String: Any] = [
+            kSecClass as String:        kSecClassGenericPassword,
+            kSecAttrService as String:  service,
+            kSecAttrAccount as String:  account
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw KeychainError.osStatus(status)
+        }
     }
 }
 

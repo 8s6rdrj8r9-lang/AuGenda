@@ -14,7 +14,10 @@
 // providers publish new pricing.
 
 import Foundation
+import os.log
 import Combine
+
+private let logger = Logger(subsystem: "com.augenda.AuGenda", category: "AIUsageLedger")
 
 // MARK: - LedgerEntry
 
@@ -100,6 +103,19 @@ final class AIUsageLedger: ObservableObject {
             .reduce(0) { $0 + $1.promptTokens + $1.completionTokens }
     }
 
+    // MARK: - Cost cap
+    
+    var maxMonthlyCostUSD: Double {
+        get { UserDefaults.standard.double(forKey: "ai.maxMonthlyCostUSD") }
+        set { UserDefaults.standard.set(newValue, forKey: "ai.maxMonthlyCostUSD") }
+    }
+    
+    func canEnrich() -> Bool {
+        let cap = maxMonthlyCostUSD
+        guard cap > 0 else { return true }
+        return thisMonthCostUSD < cap
+    }
+    
     // MARK: - Cost estimation
     //
     // Rough back-of-envelope numbers (USD per 1M tokens). Update when
@@ -135,32 +151,53 @@ final class AIUsageLedger: ObservableObject {
     // MARK: - Persistence
 
     private static var fileURL: URL? {
-        guard let dir = try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        ) else { return nil }
+        let dir: URL
+        do {
+            dir = try FileManager.default.url(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            )
+        } catch {
+            logger.error("Failed to get Application Support directory: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
         return dir.appendingPathComponent("ai-usage-ledger.json")
     }
 
     private func load() {
         guard let url = Self.fileURL,
-              FileManager.default.fileExists(atPath: url.path),
-              let data = try? Data(contentsOf: url),
-              let decoded = try? JSONDecoder().decode([AIUsageEntry].self, from: data) else {
+              FileManager.default.fileExists(atPath: url.path) else { return }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            logger.error("Failed to read usage ledger: \(error.localizedDescription, privacy: .public)")
             return
         }
-        self.entries = decoded
+        do {
+            self.entries = try JSONDecoder().decode([AIUsageEntry].self, from: data)
+        } catch {
+            logger.error("Failed to decode usage ledger: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func save() {
         guard let url = Self.fileURL else { return }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(entries) else { return }
-        // Protect at rest: unreadable until first unlock after boot (mirrors the
-        // Keychain accessibility class), still writable by background auto-enrich.
-        try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        let data: Data
+        do {
+            data = try encoder.encode(entries)
+        } catch {
+            logger.error("Failed to encode usage ledger: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        do {
+            try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        } catch {
+            logger.error("Failed to write usage ledger: \(error.localizedDescription, privacy: .public)")
+        }
     }
 }

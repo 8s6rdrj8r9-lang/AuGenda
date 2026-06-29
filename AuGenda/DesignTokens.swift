@@ -276,6 +276,10 @@ struct LowStimulationModeKey: EnvironmentKey {
     static let defaultValue: Bool = false
 }
 
+struct UIScaleKey: EnvironmentKey {
+    static let defaultValue: Double = 1.0
+}
+
 extension EnvironmentValues {
     var reduceMotion: Bool {
         get { self[ReduceMotionKey.self] }
@@ -290,6 +294,11 @@ extension EnvironmentValues {
     var lowStimulationMode: Bool {
         get { self[LowStimulationModeKey.self] }
         set { self[LowStimulationModeKey.self] = newValue }
+    }
+
+    var uiScale: Double {
+        get { self[UIScaleKey.self] }
+        set { self[UIScaleKey.self] = newValue }
     }
 
     var densityMode: DensityMode {
@@ -344,6 +353,19 @@ enum DensityMode: String, CaseIterable, Sendable {
         case .low:        return "Energy-matched picks. Minimal metadata."
         case .functional: return "Full day view. Standard density."
         case .high:       return "Everything — backlog, tomorrow, completed."
+        }
+    }
+
+    /// Inverse of autoFrom — pick a representative energy level so the two
+    /// fields stay in sync if a pin is later cleared. Shared by
+    /// CognitiveStateSelector and ProfileSetupView; prefer this over private
+    /// per-view copies.
+    var representativeEnergyLevel: Int {
+        switch self {
+        case .survival:   return 1
+        case .low:        return 2
+        case .functional: return 3
+        case .high:       return 4
         }
     }
 
@@ -407,10 +429,20 @@ enum DensityAdvisor {
         let reason: String
     }
 
-    static func suggestion(currentDensity: DensityMode) -> Suggestion? {
-        let recentSnoozes     = ActivityLog.snoozes(inLastMinutes: 15)
-        let recentCompletions = ActivityLog.completions(inLastMinutes: 30)
+    /// Shared cooldown for BOTH "Apply" and "Not now". A single source of
+    /// truth so applying a suggestion silences the triggering window the same
+    /// way dismissing it does — otherwise applying a drop re-arms a fresh
+    /// "drop again" suggestion on the very next render (the apply cascade).
+    static let cooldownSeconds: TimeInterval = 60 * 60   // 1 hour
 
+    /// Pure overload — given current density and recent activity counts,
+    /// produce an optional advisory. No I/O, fully deterministic, so the
+    /// rules are unit-testable in isolation (mirrors DifficultyEngine).
+    static func suggestion(
+        currentDensity: DensityMode,
+        recentSnoozes: Int,
+        recentCompletions: Int
+    ) -> Suggestion? {
         // Drop one level when snoozes are cascading.
         if recentSnoozes >= 3, let lower = currentDensity.next(direction: -1) {
             let plural = recentSnoozes == 1 ? "" : "s"
@@ -430,5 +462,15 @@ enum DensityAdvisor {
         }
 
         return nil
+    }
+
+    /// Thin wrapper reading live ActivityLog counts, delegating to the pure
+    /// overload above.
+    static func suggestion(currentDensity: DensityMode) -> Suggestion? {
+        suggestion(
+            currentDensity: currentDensity,
+            recentSnoozes: ActivityLog.snoozes(inLastMinutes: 15),
+            recentCompletions: ActivityLog.completions(inLastMinutes: 30)
+        )
     }
 }

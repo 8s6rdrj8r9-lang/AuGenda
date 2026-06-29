@@ -37,6 +37,9 @@
 		<string>remote-notification</string>
 	</array>
 
+	<!-- ⚠️ SECURITY: Before shipping to TestFlight or App Store, run
+	     Scripts/validate-oauth.sh to confirm the client ID is not a placeholder.
+	     Set AUGENDA_GOOGLE_CLIENT_ID in Xcode Build Settings → User-Defined. -->
 	<!-- Google Sign-In (Gemini OAuth) callback. The scheme is the reversed
 	     form of the iOS OAuth client ID in GoogleOAuth.swift; the redirect
 	     URI is "<scheme>:/oauth2redirect". ASWebAuthenticationSession matches
@@ -48,9 +51,16 @@
 			<string>google-oauth-gemini</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.googleusercontent.apps.416358058147-9g1kdn4bpip0ink7mg0ou6foj1a3nk4k</string>
+				<string>YOUR_CLIENT_ID_REVERSED</string>
 			</array>
 		</dict>
+	</array>
+
+	<key>UIAppFonts</key>
+	<array>
+		<string>AtkinsonHyperlegible-Regular.ttf</string>
+		<string>AtkinsonHyperlegible-Bold.ttf</string>
+		<string>OpenDyslexic-Regular.otf</string>
 	</array>
 </dict>
 </plist>
