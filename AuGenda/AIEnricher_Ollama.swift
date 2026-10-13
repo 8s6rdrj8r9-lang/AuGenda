@@ -10,8 +10,8 @@
 //   * No authentication
 //   * Host:port configurable (default localhost:11434)
 //
-// Privacy tier: .selfHosted — data goes over the user's own network,
-// never to a third-party cloud.
+// Privacy tier: .selfHosted — data goes to the user-configured host. That
+// host may be local or remote; the outbound policy classifies and constrains it.
 //
 // Model: defaults to llama3.1:8b. User can change via Settings.
 // Future: list available models by hitting /api/tags.
@@ -44,41 +44,58 @@ private struct OllamaResponse: Decodable {
     }
 }
 
+private struct OllamaTagsResponse: Decodable {
+    let models: [Model]
+
+    struct Model: Decodable {
+        let name: String
+        let model: String?
+    }
+}
+
 struct OllamaEnricher: AITaskEnricher {
 
     let provider: AIProvider = .ollama
 
     /// Where the user's Ollama server lives. Persisted in @AppStorage by
     /// the Settings UI; read here at call time.
-    private var hostURL: URL {
+    private func configuredHostURL() throws -> URL {
         let stored = UserDefaults.standard.string(forKey: "ai.ollama.host")
             ?? "http://localhost:11434"
-        return URL(string: stored) ?? URL(string: "http://localhost:11434")!
+        return try OllamaEndpointPolicy.validatedURL(stored)
     }
 
     /// User-selected model. Falls back to the provider default.
     private var modelID: String {
-        UserDefaults.standard.string(forKey: "ai.ollama.model")
-            ?? provider.defaultModel
+        let stored = UserDefaults.standard.string(forKey: "ai.ollama.model")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let stored, !stored.isEmpty { return stored }
+        return provider.defaultModel
     }
 
     func isAvailable() async -> Bool {
-        // Probe the server's root endpoint. Cheap, no model load.
-        var req = URLRequest(url: hostURL)
+        guard let hostURL = try? configuredHostURL() else { return false }
+        // Probe Ollama's API rather than accepting any web server at the host.
+        var req = URLRequest(url: hostURL.appendingPathComponent("api/tags"))
         req.httpMethod = "GET"
         req.timeoutInterval = 4
         do {
-            let (_, response) = try await URLSession.shared.data(for: req)
-            if let http = response as? HTTPURLResponse, http.statusCode == 200 {
-                return true
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard let http = response as? HTTPURLResponse,
+                  http.statusCode == 200,
+                  let decoded = try? JSONDecoder().decode(OllamaTagsResponse.self, from: data)
+            else { return false }
+            return decoded.models.contains {
+                $0.name == modelID || $0.model == modelID
             }
-            return false
         } catch {
             return false
         }
     }
 
     func enrich(context: EnrichmentContext) async throws -> TaskEnrichment {
+        try AIOutboundPolicy.enforce(provider: provider)
+        let hostURL = try configuredHostURL()
         let url = hostURL.appendingPathComponent("api/chat")
         let model = modelID
 
@@ -137,7 +154,7 @@ struct OllamaEnricher: AITaskEnricher {
 
         var enrichment: TaskEnrichment
         do {
-            enrichment = try JSONDecoder().decode(TaskEnrichment.self, from: contentData)
+            enrichment = try EnrichmentPayloadDecoder.decode(contentData)
         } catch {
             throw AIEnricherError.invalidResponse(detail: "inner decode failed")
         }

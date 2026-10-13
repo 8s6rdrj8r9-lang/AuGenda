@@ -54,8 +54,11 @@ struct ErrorBanner: View {
                         Image(systemName: "xmark")
                             .font(.caption)
                             .foregroundColor(Color.appTextSecondary)
+                            .frame(minWidth: 44, minHeight: 44)
                     }
+                    .buttonStyle(.plain)
                     .accessibilityLabel("Dismiss error")
+                    .accessibilityHint("Hides this error message")
                 }
                 .padding(Tokens.Spacing.base)
                 .background(Tokens.Color.warning.opacity(0.1))

@@ -31,11 +31,11 @@ final class AgendaItem {
     /// Snooze: defer this item without losing it
     var snoozedUntil: Date? = nil
 
-    /// Friction level: how hard does starting this feel right now (1–5)
+    /// Friction level: how hard does starting this feel right now (1–4)
     /// Used to surface low-friction tasks when executive function is low
     var frictionLevel: Int = 3
 
-    /// Energy level required (1 = low, 3 = high)
+    /// Energy level required (1 = low, 4 = high)
     var energyRequired: Int = 2
 
     /// Context tag: where/what this task needs (e.g. "home", "phone", "focus", "errand")

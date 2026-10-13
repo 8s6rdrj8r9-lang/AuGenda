@@ -2,8 +2,8 @@
 // AuGenda
 //
 // Google Gemini adapter. Different shape from OpenAI's chat-completions:
-//   * Endpoint: /v1beta/models/{model}:generateContent?key={key}
-//   * API key goes as a query parameter, not a header
+//   * Endpoint: /v1beta/models/{model}:generateContent
+//   * API key goes in the x-goog-api-key header; OAuth uses Bearer auth
 //   * Content uses `contents[].parts[].text` shape
 //   * Structured output via `generationConfig.responseSchema`
 //
@@ -59,44 +59,35 @@ struct GeminiEnricher: AITaskEnricher {
     private let baseURL = "https://generativelanguage.googleapis.com/v1beta/models"
 
     func isAvailable() async -> Bool {
-        // Either OAuth sign-in OR a stored API key satisfies availability.
-        if await MainActor.run(body: { GoogleOAuth.isSignedIn }) { return true }
-        return KeychainStore.hasKey(for: provider)
+        do {
+            let authentication = try await authentication()
+            guard let url = URL(string: "\(baseURL)/\(provider.defaultModel)") else {
+                return false
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.timeoutInterval = 10
+            apply(authentication, to: &request)
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return false }
+            if (http.statusCode == 401 || http.statusCode == 403),
+               case .oauth = authentication {
+                await invalidateOAuthSession()
+            }
+            return (200..<300).contains(http.statusCode)
+        } catch {
+            return false
+        }
     }
 
     func enrich(context: EnrichmentContext) async throws -> TaskEnrichment {
         let model = provider.defaultModel
 
-        // Auth: prefer OAuth (more personalized — Google associates the
-        // call with the user's actual account + project), fall back to
-        // API key if signed-in tokens aren't available.
-        let oauthToken: String? = await {
-            do {
-                return try await GoogleOAuth.currentAccessToken()
-            } catch {
-                return nil
-            }
-        }()
-
-        let url: URL
-        var bearerToken: String? = nil
-
-        if let token = oauthToken {
-            // OAuth path — token goes in Authorization header.
-            guard let u = URL(string: "\(baseURL)/\(model):generateContent") else {
-                throw AIEnricherError.invalidResponse(detail: "url construction failed")
-            }
-            url = u
-            bearerToken = token
-        } else {
-            // API key path — key goes as query parameter.
-            guard let key = try KeychainStore.get(for: provider), !key.isEmpty else {
-                throw AIEnricherError.missingAPIKey
-            }
-            guard let u = URL(string: "\(baseURL)/\(model):generateContent?key=\(key)") else {
-                throw AIEnricherError.invalidResponse(detail: "url construction failed")
-            }
-            url = u
+        // Prefer a valid OAuth token. Never silently fall back to API-key
+        // billing from a selected Google session; the user must sign out first.
+        let authentication = try await authentication()
+        guard let url = URL(string: "\(baseURL)/\(model):generateContent") else {
+            throw AIEnricherError.invalidResponse(detail: "url construction failed")
         }
 
         let systemContent = """
@@ -121,9 +112,7 @@ struct GeminiEnricher: AITaskEnricher {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let bearer = bearerToken {
-            req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
-        }
+        apply(authentication, to: &req)
         req.httpBody = try JSONEncoder().encode(body)
         req.timeoutInterval = 30
 
@@ -144,6 +133,10 @@ struct GeminiEnricher: AITaskEnricher {
         case 429:
             throw AIEnricherError.rateLimited
         case 401, 403:
+            if case .oauth = authentication {
+                await invalidateOAuthSession()
+                throw OAuthError.expiredToken
+            }
             throw AIEnricherError.missingAPIKey
         default:
             let bodyStr = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
@@ -167,7 +160,7 @@ struct GeminiEnricher: AITaskEnricher {
 
         var enrichment: TaskEnrichment
         do {
-            enrichment = try JSONDecoder().decode(TaskEnrichment.self, from: textData)
+            enrichment = try EnrichmentPayloadDecoder.decode(textData)
         } catch {
             // Strip fences and retry
             let stripped = Self.stripCodeFences(text)
@@ -176,7 +169,7 @@ struct GeminiEnricher: AITaskEnricher {
             }
             let retry: TaskEnrichment
             do {
-                retry = try JSONDecoder().decode(TaskEnrichment.self, from: strippedData)
+                retry = try EnrichmentPayloadDecoder.decode(strippedData)
             } catch {
                 logger.error("Gemini inner decode failed after stripping fences: \(error.localizedDescription, privacy: .public)")
                 throw AIEnricherError.invalidResponse(detail: "inner decode failed: \(error.localizedDescription)")
@@ -184,16 +177,56 @@ struct GeminiEnricher: AITaskEnricher {
             enrichment = retry
         }
 
+        guard let wireUsage = decoded.usageMetadata,
+              let promptTokens = wireUsage.promptTokenCount,
+              let completionTokens = wireUsage.candidatesTokenCount else {
+            throw AIEnricherError.invalidResponse(detail: "missing token usage")
+        }
         enrichment.usage = TaskEnrichment.Usage(
             provider:         provider.rawValue,
             model:            model,
-            promptTokens:     decoded.usageMetadata?.promptTokenCount ?? 0,
-            completionTokens: decoded.usageMetadata?.candidatesTokenCount ?? 0
+            promptTokens:     promptTokens,
+            completionTokens: completionTokens
         )
         if context.personalization?.allowInterestInference != true {
             enrichment.interest = nil
         }
         return enrichment
+    }
+
+    private enum Authentication {
+        case oauth(String)
+        case apiKey(String)
+    }
+
+    private func authentication() async throws -> Authentication {
+        let oauthState = await MainActor.run {
+            (isConfigured: GoogleOAuth.isConfigured, hasRecord: GoogleOAuth.hasLocalSession)
+        }
+        if oauthState.isConfigured, oauthState.hasRecord {
+            let token = try await GoogleOAuth.currentAccessToken()
+            return .oauth(token)
+        }
+
+        guard let key = try KeychainStore.get(for: provider), !key.isEmpty else {
+            throw AIEnricherError.missingAPIKey
+        }
+        return .apiKey(key)
+    }
+
+    private func apply(_ authentication: Authentication, to request: inout URLRequest) {
+        switch authentication {
+        case .oauth(let token):
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        case .apiKey(let key):
+            request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+        }
+    }
+
+    private func invalidateOAuthSession() async {
+        _ = await MainActor.run {
+            OAuthCoordinator.shared.signOut(provider: .gemini)
+        }
     }
 
     private static func stripCodeFences(_ s: String) -> String {

@@ -45,6 +45,14 @@ private struct ClaudeResponse: Decodable {
     }
 }
 
+private struct ClaudeModelListResponse: Decodable {
+    let data: [Model]
+
+    struct Model: Decodable {
+        let id: String
+    }
+}
+
 struct ClaudeEnricher: AITaskEnricher {
 
     let provider: AIProvider = .claude
@@ -57,7 +65,36 @@ struct ClaudeEnricher: AITaskEnricher {
     private let anthropicVersion = "2023-06-01"
 
     func isAvailable() async -> Bool {
-        KeychainStore.hasKey(for: provider)
+        let storedKey: String?
+        do {
+            storedKey = try KeychainStore.get(for: provider)
+        } catch {
+            return false
+        }
+        guard let key = storedKey, !key.isEmpty,
+              let url = URL(string: "https://api.anthropic.com/v1/models?limit=100") else {
+            return false
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(key, forHTTPHeaderField: "x-api-key")
+        request.setValue(anthropicVersion, forHTTPHeaderField: "anthropic-version")
+        request.timeoutInterval = 10
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode),
+                  let decoded = try? JSONDecoder().decode(
+                    ClaudeModelListResponse.self,
+                    from: data
+                  ) else {
+                return false
+            }
+            return decoded.data.contains { $0.id == provider.defaultModel }
+        } catch {
+            return false
+        }
     }
 
     func enrich(context: EnrichmentContext) async throws -> TaskEnrichment {
@@ -137,7 +174,7 @@ struct ClaudeEnricher: AITaskEnricher {
 
         var enrichment: TaskEnrichment
         do {
-            enrichment = try JSONDecoder().decode(TaskEnrichment.self, from: textData)
+            enrichment = try EnrichmentPayloadDecoder.decode(textData)
         } catch {
             // Strip fences and retry (Claude usually obeys but defensive)
             let stripped = Self.stripCodeFences(text)
@@ -146,7 +183,7 @@ struct ClaudeEnricher: AITaskEnricher {
             }
             let retry: TaskEnrichment
             do {
-                retry = try JSONDecoder().decode(TaskEnrichment.self, from: strippedData)
+                retry = try EnrichmentPayloadDecoder.decode(strippedData)
             } catch {
                 logger.error("Claude inner decode failed after stripping fences: \(error.localizedDescription, privacy: .public)")
                 throw AIEnricherError.invalidResponse(detail: "inner decode failed: \(error.localizedDescription)")
@@ -154,11 +191,16 @@ struct ClaudeEnricher: AITaskEnricher {
             enrichment = retry
         }
 
+        guard let wireUsage = decoded.usage,
+              let promptTokens = wireUsage.input_tokens,
+              let completionTokens = wireUsage.output_tokens else {
+            throw AIEnricherError.invalidResponse(detail: "missing token usage")
+        }
         enrichment.usage = TaskEnrichment.Usage(
             provider:         provider.rawValue,
             model:            model,
-            promptTokens:     decoded.usage?.input_tokens ?? 0,
-            completionTokens: decoded.usage?.output_tokens ?? 0
+            promptTokens:     promptTokens,
+            completionTokens: completionTokens
         )
         if context.personalization?.allowInterestInference != true {
             enrichment.interest = nil

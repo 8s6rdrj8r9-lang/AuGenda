@@ -11,6 +11,8 @@
 // is a pure overload — no ActivityLog I/O — so these are exact, deterministic
 // regression locks, mirroring the DifficultyEngine pure-logic pattern.
 
+import Foundation
+
 import Testing
 @testable import AuGenda
 
@@ -87,7 +89,8 @@ struct DensityAdvisorTests {
         let second = DensityAdvisor.suggestion(
             currentDensity: .functional, recentSnoozes: 3, recentCompletions: 0
         )
-        #expect(first == second)
+        #expect(first?.target == second?.target)
+        #expect(first?.reason == second?.reason)
     }
 }
 
@@ -126,5 +129,77 @@ struct EffectiveDensityTests {
         for mode in DensityMode.allCases {
             #expect(DensityMode.autoFrom(energyLevel: mode.representativeEnergyLevel) == mode)
         }
+    }
+}
+
+struct BlockStateTests {
+
+    @Test func optionalTasksDoNotGateCompletion() {
+        let block = Block(type: .custom, customName: "Routine")
+        let required = BlockTask(title: "Required")
+        let optional = BlockTask(title: "Optional", isOptional: true)
+        required.isComplete = true
+        block.tasks = [required, optional]
+
+        #expect(block.isComplete)
+    }
+
+    @Test func completedRunRemainsCompleteAfterTasksReset() {
+        let block = Block(type: .custom, customName: "Routine")
+        let task = BlockTask(title: "Step")
+        block.tasks = [task]
+        block.completedAt = .now
+        block.isActive = false
+        task.isComplete = false
+
+        #expect(block.isComplete)
+    }
+}
+
+struct ProfilePresetResetTests {
+
+    @Test func resetClearsUnrelatedOverridesBeforeApplyingPreset() {
+        let prefs = ProfilePreferences()
+        prefs.appliedPresetRaw = Neurotype.dyslexia.rawValue
+        prefs.highContrastMode = true
+        prefs.lowStimulationMode = true
+        prefs.reduceMotion = true
+        prefs.uiScale = 1.5
+        prefs.notificationPrivacyStrict = false
+
+        prefs.resetToPreset()
+
+        #expect(prefs.appFont == .system)
+        #expect(prefs.largeTouchTargets)
+        #expect(prefs.effectiveUIScale == 1.25)
+        #expect(!prefs.highContrastMode)
+        #expect(!prefs.lowStimulationMode)
+        #expect(!prefs.reduceMotion)
+        #expect(prefs.uiScale == 1.0)
+        #expect(prefs.notificationPrivacyStrict)
+    }
+
+    @Test func effectiveUIScaleClampsPersistedValuesAndHonorsLargeTargets() {
+        let prefs = ProfilePreferences()
+
+        prefs.uiScale = 0.25
+        #expect(prefs.effectiveUIScale == 1.0)
+
+        prefs.largeTouchTargets = true
+        #expect(prefs.effectiveUIScale == 1.25)
+
+        prefs.uiScale = 9
+        #expect(prefs.effectiveUIScale == 1.5)
+    }
+
+    @Test func lowStimulationCapsDensityWithoutInflatingLowCapacity() {
+        let prefs = ProfilePreferences()
+        prefs.lowStimulationMode = true
+
+        prefs.currentEnergyLevel = 4
+        #expect(prefs.effectiveDensity == .low)
+
+        prefs.currentEnergyLevel = 1
+        #expect(prefs.effectiveDensity == .survival)
     }
 }

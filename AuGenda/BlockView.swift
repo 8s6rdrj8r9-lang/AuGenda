@@ -31,7 +31,11 @@ final class BlockManager: NSObject, ObservableObject, CLLocationManagerDelegate 
     @Published var autoBundlesToPrompt: [BundleTemplate] = []
     @Published var showBundlePrompt: Bool = false
 
-    var modelContext: ModelContext?
+    var modelContext: ModelContext? {
+        didSet {
+            restorePersistedActiveBlock()
+        }
+    }
 
     private let locationManager = CLLocationManager()
     private let weatherService = WeatherService.shared
@@ -46,22 +50,30 @@ final class BlockManager: NSObject, ObservableObject, CLLocationManagerDelegate 
     // MARK: - Start a block
 
     func startBlock(_ block: Block) {
+        let previousBlock = currentBlock
+
         // Deactivate any currently active block
         if let current = currentBlock {
             current.isActive = false
             current.updatedAt = .now
         }
 
+        // A completion describes the prior run. Starting again opens a fresh
+        // run while `lastCompletedDate` preserves history/streak semantics.
+        block.completedAt = nil
         block.isActive = true
         block.startedAt = .now
         block.updatedAt = .now
-        currentBlock = block
 
         do {
             try modelContext?.save()
         } catch {
+            modelContext?.rollback()
+            currentBlock = previousBlock
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            return
         }
+        currentBlock = block
 
         // Check weather if outdoor block
         if block.type.isOutdoor && block.weatherCheckEnabled {
@@ -78,7 +90,6 @@ final class BlockManager: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     func completeBlock(_ block: Block) {
         block.isActive = false
-        block.isComplete ? () : ()
         block.completedAt = .now
         block.lastCompletedDate = .now
         block.updatedAt = .now
@@ -93,14 +104,15 @@ final class BlockManager: NSObject, ObservableObject, CLLocationManagerDelegate 
         // Remove attached bundles
         block.attachedBundles?.forEach { modelContext?.delete($0) }
 
-        if currentBlock?.clientID == block.clientID {
-            currentBlock = nil
-        }
-
         do {
             try modelContext?.save()
         } catch {
+            modelContext?.rollback()
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            return
+        }
+        if currentBlock?.clientID == block.clientID {
+            currentBlock = nil
         }
         weatherSuggestions = []
     }
@@ -121,7 +133,49 @@ final class BlockManager: NSObject, ObservableObject, CLLocationManagerDelegate 
         do {
             try modelContext?.save()
         } catch {
+            modelContext?.rollback()
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+        }
+    }
+
+    /// Restores the single durable active block after launch and repairs older
+    /// stores that contain more than one active record.
+    private func restorePersistedActiveBlock() {
+        guard let context = modelContext else {
+            currentBlock = nil
+            return
+        }
+
+        do {
+            let descriptor = FetchDescriptor<Block>(
+                predicate: #Predicate { $0.isActive }
+            )
+            let activeBlocks = try context.fetch(descriptor).sorted {
+                let lhsStart = $0.startedAt ?? .distantPast
+                let rhsStart = $1.startedAt ?? .distantPast
+                if lhsStart != rhsStart { return lhsStart > rhsStart }
+                return $0.clientID.uuidString < $1.clientID.uuidString
+            }
+
+            guard let winner = activeBlocks.first else {
+                currentBlock = nil
+                return
+            }
+
+            for duplicate in activeBlocks.dropFirst() {
+                duplicate.isActive = false
+                duplicate.updatedAt = .now
+            }
+            if activeBlocks.count > 1 {
+                try context.save()
+            }
+            currentBlock = winner
+        } catch {
+            context.rollback()
+            currentBlock = nil
+            ErrorBannerController.shared.show(
+                "Couldn't restore the active block: \(error.localizedDescription)"
+            )
         }
     }
 
@@ -327,6 +381,7 @@ final class BlockManager: NSObject, ObservableObject, CLLocationManagerDelegate 
         do {
             try context.save()
         } catch {
+            context.rollback()
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
         }
     }
@@ -781,14 +836,17 @@ struct BlockTaskRow: View {
                 do {
                     try modelContext.save()
                 } catch {
+                    modelContext.rollback()
                     ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
                 }
             } label: {
                 Image(systemName: task.isComplete ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
                     .foregroundStyle(task.isComplete ? Color.appAccent : .secondary)
+                    .frame(minWidth: 44, minHeight: 44)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(task.isComplete ? "Mark \(task.title) incomplete" : "Mark \(task.title) complete")
 
             Text(task.title)
                 .font(.body)
@@ -926,13 +984,16 @@ struct AttachedBundleCard: View {
                         do {
                             try modelContext.save()
                         } catch {
+                            modelContext.rollback()
                             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
                         }
                     } label: {
                         Image(systemName: item.isComplete ? "checkmark.circle.fill" : "circle")
                             .foregroundStyle(item.isComplete ? Color.appAccent : .secondary)
+                            .frame(minWidth: 44, minHeight: 44)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(item.isComplete ? "Mark \(item.title) incomplete" : "Mark \(item.title) complete")
 
                     Text(item.title)
                         .font(.subheadline)

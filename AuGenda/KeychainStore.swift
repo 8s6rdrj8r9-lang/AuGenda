@@ -37,29 +37,7 @@ enum KeychainStore {
     /// Read a key. Returns nil if no key has been stored for this provider.
     /// Throws only on unexpected Keychain errors.
     static func get(for provider: AIProvider) throws -> String? {
-        let query: [String: Any] = [
-            kSecClass as String:        kSecClassGenericPassword,
-            kSecAttrService as String:  service,
-            kSecAttrAccount as String:  provider.rawValue,
-            kSecMatchLimit as String:   kSecMatchLimitOne,
-            kSecReturnData as String:   true
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        switch status {
-        case errSecSuccess:
-            guard let data = result as? Data,
-                  let str = String(data: data, encoding: .utf8) else {
-                throw KeychainError.decode
-            }
-            return str
-        case errSecItemNotFound:
-            return nil
-        default:
-            throw KeychainError.osStatus(status)
-        }
+        try getString(service: service, account: provider.rawValue)
     }
 
     /// Write (or replace) a key for this provider.
@@ -73,67 +51,13 @@ enum KeychainStore {
             return
         }
 
-        guard let data = trimmed.data(using: .utf8) else {
-            throw KeychainError.encode
-        }
-
-        // Try to update an existing entry first
-        let queryUpdate: [String: Any] = [
-            kSecClass as String:        kSecClassGenericPassword,
-            kSecAttrService as String:  service,
-            kSecAttrAccount as String:  provider.rawValue
-        ]
-        let attrsUpdate: [String: Any] = [
-            kSecValueData as String:    data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        ]
-        let updateStatus = SecItemUpdate(queryUpdate as CFDictionary, attrsUpdate as CFDictionary)
-
-        switch updateStatus {
-        case errSecSuccess:
-            return
-        case errSecItemNotFound:
-            // Insert new
-            var queryAdd: [String: Any] = [
-                kSecClass as String:        kSecClassGenericPassword,
-                kSecAttrService as String:  service,
-                kSecAttrAccount as String:  provider.rawValue,
-                kSecValueData as String:    data,
-                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            ]
-            #if os(iOS)
-            if #available(iOS 15.0, *) {
-                var error: Unmanaged<CFError>?
-                if let accessControl = SecAccessControlCreateWithFlags(
-                    kCFAllocatorDefault,
-                    kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-                    .biometryCurrentSet,
-                    &error
-                ) {
-                    queryAdd[kSecAttrAccessControl as String] = accessControl
-                }
-            }
-            #endif
-            let addStatus = SecItemAdd(queryAdd as CFDictionary, nil)
-            guard addStatus == errSecSuccess else {
-                throw KeychainError.osStatus(addStatus)
-            }
-        default:
-            throw KeychainError.osStatus(updateStatus)
-        }
+        guard let data = trimmed.data(using: .utf8) else { throw KeychainError.encode }
+        try setData(data, service: service, account: provider.rawValue)
     }
 
     /// Delete a key. No-op (no throw) if not present.
     static func remove(for provider: AIProvider) throws {
-        let query: [String: Any] = [
-            kSecClass as String:        kSecClassGenericPassword,
-            kSecAttrService as String:  service,
-            kSecAttrAccount as String:  provider.rawValue
-        ]
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw KeychainError.osStatus(status)
-        }
+        try remove(service: service, account: provider.rawValue)
     }
 
     /// Quick "is a key stored?" check for the Settings UI. Doesn't return
@@ -184,9 +108,9 @@ enum KeychainStore {
         SecItemDelete(query as CFDictionary)
     }
 
-    // MARK: - Internal throwing implementations
+    // MARK: - Shared throwing implementations
 
-    private static func get(account: String) throws -> String? {
+    static func getData(service: String, account: String) throws -> Data? {
         let query: [String: Any] = [
             kSecClass as String:        kSecClassGenericPassword,
             kSecAttrService as String:  service,
@@ -200,11 +124,8 @@ enum KeychainStore {
 
         switch status {
         case errSecSuccess:
-            guard let data = result as? Data,
-                  let str = String(data: data, encoding: .utf8) else {
-                throw KeychainError.decode
-            }
-            return str
+            guard let data = result as? Data else { throw KeychainError.decode }
+            return data
         case errSecItemNotFound:
             return nil
         default:
@@ -212,72 +133,31 @@ enum KeychainStore {
         }
     }
 
-    private static func set(value: String, account: String) throws {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            try remove(account: account)
-            return
-        }
-
-        guard let data = trimmed.data(using: .utf8) else {
-            throw KeychainError.encode
-        }
-
-        let queryUpdate: [String: Any] = [
+    static func setData(_ data: Data, service: String, account: String) throws {
+        let query: [String: Any] = [
             kSecClass as String:        kSecClassGenericPassword,
             kSecAttrService as String:  service,
             kSecAttrAccount as String:  account
         ]
-        let attrsUpdate: [String: Any] = [
-            kSecValueData as String:    data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        let attrs: [String: Any] = [
+            kSecValueData as String: data
         ]
-        let updateStatus = SecItemUpdate(queryUpdate as CFDictionary, attrsUpdate as CFDictionary)
 
+        let updateStatus = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
         switch updateStatus {
         case errSecSuccess:
             return
         case errSecItemNotFound:
-            var queryAdd: [String: Any] = [
-                kSecClass as String:        kSecClassGenericPassword,
-                kSecAttrService as String:  service,
-                kSecAttrAccount as String:  account,
-                kSecValueData as String:    data,
-                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            ]
-            #if os(iOS)
-            if #available(iOS 15.0, *) {
-                var error: Unmanaged<CFError>?
-                if let accessControl = SecAccessControlCreateWithFlags(
-                    kCFAllocatorDefault,
-                    kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-                    .biometryCurrentSet,
-                    &error
-                ) {
-                    queryAdd[kSecAttrAccessControl as String] = accessControl
-                }
-            }
-            #endif
-            let addStatus = SecItemAdd(queryAdd as CFDictionary, nil)
-            if addStatus == errSecSuccess { return }
-            // Fallback: retry without biometry access control (simulator-safe)
-            let queryAddNoBio: [String: Any] = [
-                kSecClass as String:        kSecClassGenericPassword,
-                kSecAttrService as String:  service,
-                kSecAttrAccount as String:  account,
-                kSecValueData as String:    data,
-                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            ]
-            let addStatusNoBio = SecItemAdd(queryAddNoBio as CFDictionary, nil)
-            guard addStatusNoBio == errSecSuccess else {
-                throw KeychainError.osStatus(addStatusNoBio)
-            }
+            try addData(data, service: service, account: account)
+        case errSecInteractionNotAllowed, errSecAuthFailed:
+            try remove(service: service, account: account)
+            try addData(data, service: service, account: account)
         default:
             throw KeychainError.osStatus(updateStatus)
         }
     }
 
-    private static func remove(account: String) throws {
+    static func remove(service: String, account: String) throws {
         let query: [String: Any] = [
             kSecClass as String:        kSecClassGenericPassword,
             kSecAttrService as String:  service,
@@ -287,6 +167,49 @@ enum KeychainStore {
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw KeychainError.osStatus(status)
         }
+    }
+
+    private static func getString(service: String, account: String) throws -> String? {
+        guard let data = try getData(service: service, account: account) else { return nil }
+        guard let str = String(data: data, encoding: .utf8) else {
+            throw KeychainError.decode
+        }
+        return str
+    }
+
+    private static func addData(_ data: Data, service: String, account: String) throws {
+        let query: [String: Any] = [
+            kSecClass as String:        kSecClassGenericPassword,
+            kSecAttrService as String:  service,
+            kSecAttrAccount as String:  account,
+            kSecValueData as String:    data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        ]
+        let status = SecItemAdd(query as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            throw KeychainError.osStatus(status)
+        }
+    }
+
+    // MARK: - Internal string implementations
+
+    private static func get(account: String) throws -> String? {
+        try getString(service: service, account: account)
+    }
+
+    private static func set(value: String, account: String) throws {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            try remove(account: account)
+            return
+        }
+
+        guard let data = trimmed.data(using: .utf8) else { throw KeychainError.encode }
+        try setData(data, service: service, account: account)
+    }
+
+    private static func remove(account: String) throws {
+        try remove(service: service, account: account)
     }
 }
 

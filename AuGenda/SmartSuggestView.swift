@@ -38,8 +38,7 @@ struct SmartSuggestView: View {
                     return true
                 }()
                 return assignedOK &&
-                    task.isActionable &&
-                    !task.isBlocked(in: modelContext) &&
+                    task.isActionable(in: modelContext) &&
                     task.difficultyRank <= energyLevel * 2
             }
             .sorted { $0.ndPriorityScore > $1.ndPriorityScore }

@@ -8,9 +8,17 @@ xcuserdata/
 # Build products
 build/
 DerivedData/
+*.appiconset.backup/
+*.store-shm
+*.store-wal
 
 # Swift Package Manager
 .build/
 
 # Sensitive
 *.env
+
+# Local audit scratch outputs (curated evidence belongs under audits/)
+/audit-report-v*.md
+/resonator-*.md
+/local-artifacts/

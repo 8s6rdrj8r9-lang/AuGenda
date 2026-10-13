@@ -108,7 +108,7 @@ enum WatchTokens {
         // Text — primary stays full-bright for legibility; secondary dimmed.
         static let textPrimary   = SwiftUI.Color.white
         static let textSecondary = SwiftUI.Color(white: 0.65)
-        static let textTertiary  = SwiftUI.Color(white: 0.45)
+        static let textTertiary  = SwiftUI.Color(white: 0.55)
 
         // Accent — the muted activation tone, applied to primary action only.
         static let accent = activation

@@ -54,8 +54,11 @@ final class FocusSession {
     
     var isOverdue: Bool {
         guard state == .active else { return false }
-        let plannedEnd = startTime.addingTimeInterval(Double(plannedDurationMinutes) * 60)
-        return Date.now > plannedEnd
+        return Date.now > plannedEndTime
+    }
+
+    var plannedEndTime: Date {
+        startTime.addingTimeInterval(Double(plannedDurationMinutes) * 60)
     }
     
     func recordInterruption(reason: String = "") {

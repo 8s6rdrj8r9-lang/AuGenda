@@ -38,4 +38,28 @@ final class KeychainStoreTests: XCTestCase {
         let retrieved = KeychainStore.get(for: "test-provider")
         XCTAssertEqual(retrieved, "new-key")
     }
+
+    @MainActor
+    func testSharedDataStorageRoundTripsOAuthShapedPayload() throws {
+        let service = "com.augenda.AuGenda.tests.oauth"
+        let account = "oauth-test-provider"
+        try? KeychainStore.remove(service: service, account: account)
+        defer { try? KeychainStore.remove(service: service, account: account) }
+
+        let tokens = OAuthTokens(
+            accessToken: "access-token",
+            refreshToken: "refresh-token",
+            expiresAt: Date(timeIntervalSince1970: 2_000_000_000)
+        )
+        let data = try JSONEncoder().encode(tokens)
+
+        try KeychainStore.setData(data, service: service, account: account)
+
+        let stored = try KeychainStore.getData(service: service, account: account)
+        XCTAssertNotNil(stored)
+        let decoded = try JSONDecoder().decode(OAuthTokens.self, from: stored ?? Data())
+        XCTAssertEqual(decoded.accessToken, tokens.accessToken)
+        XCTAssertEqual(decoded.refreshToken, tokens.refreshToken)
+        XCTAssertEqual(decoded.expiresAt, tokens.expiresAt)
+    }
 }

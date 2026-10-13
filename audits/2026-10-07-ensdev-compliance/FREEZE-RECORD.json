@@ -1,0 +1,12 @@
+{
+  "audit_id": "AUGENDA-ENSDEV-2026-10-07",
+  "input_version": "1.0",
+  "status": "FROZEN",
+  "authorization": "Direct user message: FREEZE & START AUDIT",
+  "authorized_date": "2026-10-07",
+  "timezone": "America/Edmonton",
+  "source_snapshot": "/Users/arthur/Development/AuGenda/local-artifacts/ensdev-audit-2026-10-07/input-v1",
+  "source_manifest_sha256": "e07ade3f53874b7175552d9b174689605a313e3ffd3fb296724accf41c3e38b7",
+  "accepted_review_sha256": "3ba40196f5421c4221caa6225ec22859570c338cb808af1e30f97007df590cf9",
+  "context_boundary": "Same chat; immutable files and explicit phase boundary, not perfect context isolation."
+}

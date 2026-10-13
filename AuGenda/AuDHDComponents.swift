@@ -19,6 +19,7 @@ struct AuDHDCard<Content: View>: View {
     var isSeparated: Bool = true  // Add top border if in a list
 
     @Environment(\.uiScale) private var uiScale
+    @Environment(\.lowStimulationMode) private var lowStimulationMode
 
     init(
         spacing: CGFloat = Tokens.Spacing.elementSpacing,
@@ -45,8 +46,8 @@ struct AuDHDCard<Content: View>: View {
                 )
         )
         .shadow(
-            color: Tokens.Shadow.subtle.color,
-            radius: Tokens.Shadow.subtle.radius,
+            color: lowStimulationMode ? .clear : Tokens.Shadow.subtle.color,
+            radius: lowStimulationMode ? 0 : Tokens.Shadow.subtle.radius,
             x: Tokens.Shadow.subtle.x,
             y: Tokens.Shadow.subtle.y
         )
@@ -99,7 +100,7 @@ struct AuDHDButton: View {
                         .tint(foregroundColor)
                 } else if let icon = icon {
                     Image(systemName: icon)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.headline)
                 }
 
                 Text(title)
@@ -235,7 +236,7 @@ struct OptionCard: View {
 
                     // Selection indicator
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 24, weight: .semibold))
+                        .font(.title2.weight(.semibold))
                         .foregroundColor(
                             isSelected ? Tokens.Color.primary : Color.appBorder
                         )
@@ -282,7 +283,7 @@ struct StatusAlert: View {
                 // Icon
                 VStack {
                     Image(systemName: icon ?? defaultIcon)
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(.headline)
                         .foregroundColor(iconColor)
                 }
                 .frame(width: 24)
@@ -316,10 +317,13 @@ struct StatusAlert: View {
                 if dismissible {
                     Button(action: { isShown = false }) {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 18))
+                            .font(.headline)
                             .foregroundColor(Color.appTextSecondary)
+                            .frame(minWidth: 44, minHeight: 44)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss \(title)")
+                    .accessibilityHint("Hides this message")
                 }
             }
             .padding(Tokens.Spacing.base)

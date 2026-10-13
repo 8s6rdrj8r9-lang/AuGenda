@@ -1,14 +1,9 @@
 // WatchConnectivityManager.swift
-// AUDHD Agenda App
+// AuGenda
 //
-// Handles bidirectional communication between iPhone and Apple Watch.
-// Watch cannot access CloudKit directly — iPhone is the source of truth.
-// Watch gets a lightweight subset: next task, current energy level, focus timer state.
-//
-// SETUP REQUIRED:
-// 1. Add WatchConnectivity framework to both iPhone and Watch targets
-// 2. Initialize WatchConnectivityManager early in app lifecycle (see AUDHDAgendaApp.swift)
-// 3. Create a matching WatchConnectivityManager in the Watch Extension target
+// The phone is the source of truth. It sends a versioned, full-replacement
+// snapshot scoped to the active profile and idempotently applies durable
+// mutations queued by the Watch.
 
 import Combine
 import Foundation
@@ -22,67 +17,21 @@ private let logger = Logger(subsystem: "com.augenda.AuGenda", category: "WatchCo
 
 #if canImport(WatchConnectivity)
 
-// MARK: - Message Keys
-// Shared constants — copy this enum to your Watch Extension target too
-
-enum WCMessageKey {
-    static let messageType = "messageType"
-    static let nextTask = "nextTask"
-    static let energyLevel = "energyLevel"
-    static let focusState = "focusState"
-    static let taskCompleted = "taskCompleted"
-    static let taskSnoozed = "taskSnoozed"
-    static let snoozeMinutes = "snoozeMinutes"
-    static let taskClientID = "taskClientID"
-    static let agendaItemClientID = "agendaItemClientID"
-    static let timestamp = "timestamp"
-}
-
-enum WCMessageType: String {
-    case syncSnapshot = "syncSnapshot"         // iPhone → Watch: full lightweight sync
-    case taskCompleted = "taskCompleted"       // Watch → iPhone: mark complete
-    case taskSnoozed = "taskSnoozed"           // Watch → iPhone: snooze item
-    case energyUpdate = "energyUpdate"         // Watch → iPhone: user changed energy level
-    case requestSync = "requestSync"           // Watch → iPhone: please send fresh data
-    case focusStarted = "focusStarted"         // iPhone → Watch: focus session began
-    case focusEnded = "focusEnded"             // iPhone → Watch: focus session ended
-}
-
-
-// MARK: - Watch Sync Payload
-// Lightweight struct — only what the Watch needs
-
-struct WatchSyncPayload: Codable {
-    var nextAgendaItemTitle: String
-    var nextAgendaItemTime: Date?
-    var nextAgendaItemClientID: String
-    var currentEnergyLevel: Int
-    var focusSessionActive: Bool
-    var focusSessionEndsAt: Date?
-    var pendingTaskCount: Int
-    var lowFrictionTaskCount: Int   // tasks at friction ≤ 2, actionable now
-    var pendingRecovery: Bool
-}
-
-
-// MARK: - WatchConnectivityManager
-
 @MainActor
 final class WatchConnectivityManager: NSObject, ObservableObject {
-
     nonisolated let objectWillChange = ObservableObjectPublisher()
 
     static let shared = WatchConnectivityManager()
 
-    // MARK: - Published state (drives iPhone UI awareness of Watch)
-    @Published var isWatchReachable: Bool = false
-    @Published var lastSyncDate: Date? = nil
-    @Published var lastWatchAction: WCMessageType? = nil
+    @Published var isWatchReachable = false
+    @Published var lastSyncDate: Date?
+    @Published var lastWatchAction: WatchMutationKind?
 
-    // Injected after init — set this from your App entry point
     var modelContext: ModelContext?
 
-    // MARK: - Init
+    private let processedMutationDefaultsKey = "watch.sync.processedMutationIDs.v1"
+    private let maximumProcessedMutationCount = 1_024
+
     private override init() {
         super.init()
         guard WCSession.isSupported() else { return }
@@ -90,236 +39,428 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         WCSession.default.activate()
     }
 
-    // MARK: - Send sync snapshot to Watch
+    // MARK: Phone -> Watch state
 
     func sendSyncSnapshot() {
-        guard WCSession.default.activationState == .activated else { return }
-        guard WCSession.default.isWatchAppInstalled else { return }
+        let session = WCSession.default
+        guard session.activationState == .activated, session.isWatchAppInstalled else { return }
 
-        let payload = buildPayload()
-
-        let encoded: Data
+        guard let snapshot = buildSnapshot() else { return }
+        let message: [String: Any]
         do {
-            encoded = try JSONEncoder().encode(payload)
+            message = try WatchSyncContract.message(type: .syncSnapshot, payload: snapshot)
         } catch {
-            logger.error("Failed to encode watch payload: \(error.localizedDescription, privacy: .public)")
-            return
-        }
-        let dict: [String: Any]
-        do {
-            guard let d = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] else {
-                logger.error("Failed to cast encoded payload to dictionary")
-                return
-            }
-            dict = d
-        } catch {
-            logger.error("Failed to serialize watch payload: \(error.localizedDescription, privacy: .public)")
+            logger.error("Failed to encode Watch snapshot: \(error.localizedDescription, privacy: .public)")
             return
         }
 
-        var message = dict
-        message[WCMessageKey.messageType] = WCMessageType.syncSnapshot.rawValue
-        message[WCMessageKey.timestamp] = Date.now.timeIntervalSince1970
-
-        if WCSession.default.isReachable {
-            // Watch is awake — send immediately
-            WCSession.default.sendMessage(message, replyHandler: nil) { error in
-                logger.error("WC sendMessage error: \(error.localizedDescription, privacy: .public)")
-            }
-        } else {
-            // Watch not reachable — queue via application context (delivered on next wake)
-            do {
-                try WCSession.default.updateApplicationContext(message)
-            } catch {
-                logger.error("Failed to update application context: \(error.localizedDescription, privacy: .public)")
-            }
+        // Application context is intentionally replaceable: only the newest
+        // complete snapshot matters. This also guarantees eventual delivery.
+        do {
+            try session.updateApplicationContext(message)
+            lastSyncDate = snapshot.generatedAt
+        } catch {
+            logger.error("Failed to update Watch application context: \(error.localizedDescription, privacy: .public)")
         }
 
-        lastSyncDate = .now
+        // Reachable delivery is a latency optimization; application context
+        // remains the durable fallback if this immediate send fails.
+        if session.isReachable {
+            session.sendMessage(message, replyHandler: nil) { error in
+                logger.error("Immediate Watch snapshot failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
-    // MARK: - Send focus session state
-
+    /// Focus state is part of the versioned snapshot, eliminating the former
+    /// key and Date-encoding drift between one-off focus messages and sync.
     func sendFocusStarted(endsAt: Date) {
-        let message: [String: Any] = [
-            WCMessageKey.messageType: WCMessageType.focusStarted.rawValue,
-            "focusEndsAt": endsAt.timeIntervalSince1970
-        ]
-        send(message)
+        _ = endsAt
+        sendSyncSnapshot()
     }
 
     func sendFocusEnded() {
-        let message: [String: Any] = [
-            WCMessageKey.messageType: WCMessageType.focusEnded.rawValue
-        ]
-        send(message)
+        sendSyncSnapshot()
     }
 
-    // MARK: - Private helpers
-
-    private func send(_ message: [String: Any]) {
-        guard WCSession.default.activationState == .activated else { return }
-        if WCSession.default.isReachable {
-            WCSession.default.sendMessage(message, replyHandler: nil, errorHandler: { error in
-                logger.error("WC send error: \(error.localizedDescription, privacy: .public)")
-            })
-        } else {
-            do {
-                try WCSession.default.updateApplicationContext(message)
-            } catch {
-                logger.error("Failed to update application context: \(error.localizedDescription, privacy: .public)")
-            }
+    func buildSnapshot(at generatedAt: Date = .now) -> WatchSnapshot? {
+        guard let context = modelContext,
+              let activeProfileID = ActiveProfileManager.shared.activeProfile?.clientID else {
+            return emptySnapshot(generatedAt: generatedAt)
         }
-    }
 
-    private func buildPayload() -> WatchSyncPayload {
-        guard let context = modelContext else {
-            return WatchSyncPayload(
-                nextAgendaItemTitle: "No data",
-                nextAgendaItemTime: nil,
-                nextAgendaItemClientID: "",
-                currentEnergyLevel: 3,
-                focusSessionActive: false,
-                focusSessionEndsAt: nil,
-                pendingTaskCount: 0,
-                lowFrictionTaskCount: 0,
-                pendingRecovery: false
+        let agendaDescriptor = FetchDescriptor<AgendaItem>(
+            predicate: #Predicate { !$0.isComplete },
+            sortBy: [SortDescriptor(\.scheduledDate), SortDescriptor(\.sortOrder)]
+        )
+        let allAgendaItems: [AgendaItem]
+        do {
+            allAgendaItems = try context.fetch(agendaDescriptor)
+        } catch {
+            logger.error(
+                "Watch snapshot agenda fetch failed; preserving the last delivered snapshot: \(error.localizedDescription, privacy: .public)"
+            )
+            return nil
+        }
+        let agendaItems = allAgendaItems
+            .filter { belongsToActiveProfile($0.assignedToProfileID, activeProfileID: activeProfileID) }
+            .prefix(32)
+            .map {
+                WatchAgendaSummary(
+                    clientID: $0.clientID,
+                    title: $0.title,
+                    scheduledDate: $0.scheduledDate,
+                    isAllDay: $0.isAllDay,
+                    snoozedUntil: $0.snoozedUntil,
+                    frictionLevel: $0.frictionLevel,
+                    contextTag: $0.contextTag
+                )
+            }
+
+        let taskDescriptor = FetchDescriptor<AgendaTask>(
+            predicate: #Predicate { !$0.isComplete && !$0.isAbandoned },
+            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.createdAt)]
+        )
+        let allTasks: [AgendaTask]
+        do {
+            allTasks = try context.fetch(taskDescriptor)
+        } catch {
+            logger.error(
+                "Watch snapshot task fetch failed; preserving the last delivered snapshot: \(error.localizedDescription, privacy: .public)"
+            )
+            return nil
+        }
+        let profileTasks = allTasks.filter {
+            belongsToActiveProfile($0.assignedToProfileID, activeProfileID: activeProfileID)
+        }
+        let relationshipDescriptor = FetchDescriptor<TaskRelationship>(
+            predicate: #Predicate {
+                $0.typeRaw == "blocks" || $0.typeRaw == "follows"
+            }
+        )
+        let blockingRelationships: [TaskRelationship]
+        do {
+            blockingRelationships = try context.fetch(relationshipDescriptor)
+        } catch {
+            logger.error(
+                "Watch snapshot relationship fetch failed; preserving the last delivered snapshot: \(error.localizedDescription, privacy: .public)"
+            )
+            return nil
+        }
+        let blockedIDs = TaskProjectionIndex.blockedTaskIDs(
+            tasks: allTasks,
+            relationships: blockingRelationships
+        )
+        let actionableTasks = profileTasks.filter {
+            TaskProjectionIndex.isLifecycleActionable($0, now: generatedAt)
+                && !blockedIDs.contains($0.clientID)
+        }
+        let backlogTasks = actionableTasks.prefix(16).map {
+            WatchBacklogSummary(
+                clientID: $0.clientID,
+                title: $0.title,
+                frictionLevel: $0.frictionLevel,
+                contextTag: $0.contextTag,
+                sortOrder: $0.sortOrder
             )
         }
 
-        // Fetch next upcoming incomplete agenda item
-        let now = Date.now
-        let agendaDescriptor = FetchDescriptor<AgendaItem>(
-            predicate: #Predicate {
-                !$0.isComplete && $0.scheduledDate >= now
-            },
-            sortBy: [SortDescriptor(\.scheduledDate)]
-        )
-        let upcoming = (try? context.fetch(agendaDescriptor)) ?? []
-        let next = upcoming.first
-
-        // Count actionable tasks — scoped to active profile where possible
-        let activeProfileID = ActiveProfileManager.shared.activeProfile?.clientID
-        let taskDescriptor = FetchDescriptor<AgendaTask>(
-            predicate: #Predicate {
-                !$0.isComplete && !$0.isAbandoned
-            }
-        )
-        let allTasks = (try? context.fetch(taskDescriptor)) ?? []
-        // Filter to tasks assigned to the active profile (or unassigned legacy tasks)
-        let profileTasks = allTasks.filter { task in
-            if let assignedID = task.assignedToProfileID {
-                return assignedID == activeProfileID
-            }
-            return true
-        }
-        let lowFriction = profileTasks.filter { $0.frictionLevel <= 2 && $0.isActionable }
-
-        // Read energy from active profile's preferences (not legacy UserPreferences)
-        let activePrefs = ActiveProfileManager.shared.activePreferences
-        let energyLevel = activePrefs?.currentEnergyLevel ?? 3
-        let focusManager = NotificationManager.shared
-        let pendingRecovery = InterruptionContext.currentActivity() != nil
-
-        return WatchSyncPayload(
-            nextAgendaItemTitle: next?.title ?? "Nothing scheduled",
-            nextAgendaItemTime: next?.scheduledDate,
-            nextAgendaItemClientID: next?.clientID.uuidString ?? "",
-            currentEnergyLevel: energyLevel,
-            focusSessionActive: focusManager.focusSessionActive,
-            focusSessionEndsAt: focusManager.focusSessionEndsAt,
+        let preferences = ActiveProfileManager.shared.activePreferences
+        return WatchSnapshot(
+            schemaVersion: WatchSyncContract.schemaVersion,
+            snapshotID: UUID(),
+            generatedAt: generatedAt,
+            profileID: activeProfileID,
+            agendaItems: Array(agendaItems),
+            backlogTasks: Array(backlogTasks),
+            currentEnergyLevel: preferences?.currentEnergyLevel ?? 3,
+            densityModeRaw: preferences?.effectiveDensity.rawValue,
+            focusSessionActive: NotificationManager.shared.focusSessionActive,
+            focusSessionEndsAt: NotificationManager.shared.focusSessionEndsAt,
             pendingTaskCount: profileTasks.count,
-            lowFrictionTaskCount: lowFriction.count,
-            pendingRecovery: pendingRecovery
+            lowFrictionTaskCount: actionableTasks.filter { $0.frictionLevel <= 2 }.count,
+            pendingRecovery: InterruptionContext.currentActivity() != nil
         )
     }
 
-    // MARK: - Handle incoming Watch messages
+    private func emptySnapshot(generatedAt: Date) -> WatchSnapshot {
+        WatchSnapshot(
+            schemaVersion: WatchSyncContract.schemaVersion,
+            snapshotID: UUID(),
+            generatedAt: generatedAt,
+            profileID: nil,
+            agendaItems: [],
+            backlogTasks: [],
+            currentEnergyLevel: 3,
+            densityModeRaw: nil,
+            focusSessionActive: false,
+            focusSessionEndsAt: nil,
+            pendingTaskCount: 0,
+            lowFrictionTaskCount: 0,
+            pendingRecovery: false
+        )
+    }
 
-    private func handleIncoming(_ message: [String: AnyObject]) {
-        guard let typeRaw = message[WCMessageKey.messageType] as? String,
-              let type = WCMessageType(rawValue: typeRaw)
-        else { return }
+    private func belongsToActiveProfile(_ assignedID: UUID?, activeProfileID: UUID) -> Bool {
+        // Unassigned legacy records are visible to the locally active profile,
+        // matching the app's existing task filtering. Records assigned to any
+        // other household profile never cross the Watch transport boundary.
+        assignedID == nil || assignedID == activeProfileID
+    }
 
-        lastWatchAction = type
+    // MARK: Watch -> Phone mutations
+
+    private func handleIncoming(_ message: [String: Any]) {
+        guard let rawType = message[WatchSyncContract.messageTypeKey] as? String,
+              let type = WatchSyncContract.MessageType(rawValue: rawType) else {
+            return
+        }
 
         switch type {
-        case .taskCompleted:
-            handleTaskCompleted(message)
-        case .taskSnoozed:
-            handleTaskSnoozed(message)
-        case .energyUpdate:
-            handleEnergyUpdate(message)
+        case .mutation:
+            do {
+                let mutation = try WatchSyncContract.decode(
+                    WatchMutation.self,
+                    from: message,
+                    expectedMessageType: .mutation
+                )
+                handleMutation(mutation)
+            } catch {
+                logger.error("Rejected malformed Watch mutation: \(error.localizedDescription, privacy: .public)")
+            }
         case .requestSync:
             sendSyncSnapshot()
-        default:
+        case .syncSnapshot, .acknowledgement:
             break
         }
     }
 
-    private func handleTaskCompleted(_ message: [String: AnyObject]) {
-        guard let context = modelContext,
-              let idString = message[WCMessageKey.agendaItemClientID] as? String,
-              let uuid = UUID(uuidString: idString)
-        else { return }
-
-        let descriptor = FetchDescriptor<AgendaItem>(
-            predicate: #Predicate { $0.clientID == uuid }
-        )
-        guard let item = (try? context.fetch(descriptor))?.first else { return }
-        item.isComplete = true
-        item.completedAt = .now
-        item.updatedAt = .now
-        do {
-            try context.save()
-        } catch {
-            ErrorBannerController.shared.show("Watch sync failed to save: \(error.localizedDescription)")
+    private func handleMutation(_ mutation: WatchMutation) {
+        guard mutation.schemaVersion == WatchSyncContract.schemaVersion else {
+            sendAcknowledgement(
+                WatchAcknowledgement(
+                    eventID: mutation.eventID,
+                    status: .rejected,
+                    reason: "Unsupported sync schema"
+                )
+            )
+            return
         }
-        sendSyncSnapshot()
+
+        if hasProcessed(mutation.eventID) {
+            // A prior launch may have persisted the mutation and ledger but
+            // terminated before publishing its replacement snapshot.
+            sendSyncSnapshot()
+            sendAcknowledgement(
+                WatchAcknowledgement(eventID: mutation.eventID, status: .duplicate)
+            )
+            return
+        }
+
+        let acknowledgement = apply(mutation)
+        if acknowledgement.status == .applied {
+            recordProcessed(mutation.eventID)
+            lastWatchAction = mutation.kind
+            sendSyncSnapshot()
+        }
+        sendAcknowledgement(acknowledgement)
     }
 
-    private func handleTaskSnoozed(_ message: [String: AnyObject]) {
-        guard let context = modelContext,
-              let idString = message[WCMessageKey.agendaItemClientID] as? String,
-              let uuid = UUID(uuidString: idString),
-              let minutes = message[WCMessageKey.snoozeMinutes] as? Int
-        else { return }
-
-        let descriptor = FetchDescriptor<AgendaItem>(
-            predicate: #Predicate { $0.clientID == uuid }
-        )
-        guard let item = (try? context.fetch(descriptor))?.first else { return }
-        item.snoozedUntil = Calendar.current.date(byAdding: .minute, value: minutes, to: .now)
-        item.updatedAt = .now
-        do {
-            try context.save()
-        } catch {
-            ErrorBannerController.shared.show("Watch sync failed to save: \(error.localizedDescription)")
+    private func apply(_ mutation: WatchMutation) -> WatchAcknowledgement {
+        guard let context = modelContext else {
+            return retryable(mutation, reason: "Phone data store unavailable")
         }
-        sendSyncSnapshot()
+        guard let activeProfileID = ActiveProfileManager.shared.activeProfile?.clientID,
+              activeProfileID == mutation.profileID else {
+            return rejected(mutation, reason: "Active profile changed")
+        }
+
+        switch mutation.kind {
+        case .completeAgendaItem:
+            guard let item = agendaItem(
+                id: mutation.agendaItemID,
+                activeProfileID: activeProfileID,
+                in: context
+            ) else {
+                return rejected(mutation, reason: "Agenda item unavailable")
+            }
+            if !item.isComplete {
+                do {
+                    let next = try AgendaItemLifecycleService.complete(
+                        item,
+                        in: context,
+                        at: mutation.createdAt
+                    )
+                    if let next {
+                        NotificationManager.shared.scheduleNotifications(for: next)
+                    }
+                } catch {
+                    return retryable(mutation, reason: "Could not save completion")
+                }
+            }
+            NotificationManager.shared.cancelNotifications(for: item)
+
+        case .snoozeAgendaItem:
+            guard let minutes = mutation.snoozeMinutes, (1...1_440).contains(minutes) else {
+                return rejected(mutation, reason: "Invalid snooze duration")
+            }
+            guard let item = agendaItem(
+                id: mutation.agendaItemID,
+                activeProfileID: activeProfileID,
+                in: context
+            ) else {
+                return rejected(mutation, reason: "Agenda item unavailable")
+            }
+            // Derive the deadline from the immutable event timestamp so a
+            // replay after a crash cannot extend the snooze a second time.
+            let snoozeDate = mutation.createdAt.addingTimeInterval(Double(minutes) * 60)
+            item.snoozedUntil = snoozeDate
+            item.updatedAt = max(item.updatedAt, mutation.createdAt)
+            guard save(context) else {
+                return retryable(mutation, reason: "Could not save snooze")
+            }
+            NotificationManager.shared.scheduleSnooze(
+                item: item,
+                at: snoozeDate
+            )
+
+        case .updateEnergy:
+            guard let level = mutation.energyLevel, TaskFieldDomain.energy.contains(level),
+                  let preferences = ActiveProfileManager.shared.activePreferences else {
+                return rejected(mutation, reason: "Invalid energy level")
+            }
+            preferences.currentEnergyLevel = level
+            preferences.updatedAt = .now
+            guard save(context) else {
+                return retryable(mutation, reason: "Could not save energy")
+            }
+
+        case .captureTask:
+            let title = mutation.captureTitle?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !title.isEmpty, title.count <= 500 else {
+                return rejected(mutation, reason: "Invalid capture")
+            }
+            // The event ID is also the created task's durable identity. If the
+            // app committed the task and terminated before updating the
+            // UserDefaults acknowledgement ledger, redelivery finds this
+            // record and remains exactly-once from the user's perspective.
+            if agendaTask(id: mutation.eventID, in: context) != nil {
+                return WatchAcknowledgement(
+                    eventID: mutation.eventID,
+                    status: .applied
+                )
+            }
+            let task = AgendaTask(
+                title: title,
+                frictionLevel: 3,
+                energyRequired: 2,
+                estimatedMinutes: 15
+            )
+            task.clientID = mutation.eventID
+            task.createdAt = mutation.createdAt
+            task.updatedAt = mutation.createdAt
+            task.assignedToProfileID = activeProfileID
+            context.insert(task)
+            guard save(context) else {
+                return retryable(mutation, reason: "Could not save capture")
+            }
+        }
+
+        return WatchAcknowledgement(eventID: mutation.eventID, status: .applied)
     }
 
-    private func handleEnergyUpdate(_ message: [String: AnyObject]) {
-        guard let level = message[WCMessageKey.energyLevel] as? Int else { return }
-
-        // Write energy update to the active profile's preferences (not legacy UserPreferences)
-        guard let prefs = ActiveProfileManager.shared.activePreferences else { return }
-        prefs.currentEnergyLevel = level
-        prefs.updatedAt = .now
-        do {
-            try modelContext?.save()
-        } catch {
-            ErrorBannerController.shared.show("Watch sync failed to save: \(error.localizedDescription)")
+    private func agendaItem(
+        id: UUID?,
+        activeProfileID: UUID,
+        in context: ModelContext
+    ) -> AgendaItem? {
+        guard let id else { return nil }
+        let descriptor = FetchDescriptor<AgendaItem>(
+            predicate: #Predicate { $0.clientID == id }
+        )
+        guard let item = (try? context.fetch(descriptor))?.first,
+              belongsToActiveProfile(item.assignedToProfileID, activeProfileID: activeProfileID) else {
+            return nil
         }
-        sendSyncSnapshot()
+        return item
+    }
+
+    private func agendaTask(id: UUID, in context: ModelContext) -> AgendaTask? {
+        let descriptor = FetchDescriptor<AgendaTask>(
+            predicate: #Predicate { $0.clientID == id }
+        )
+        return (try? context.fetch(descriptor))?.first
+    }
+
+    private func save(_ context: ModelContext) -> Bool {
+        do {
+            try context.save()
+            return true
+        } catch {
+            context.rollback()
+            logger.error("Watch mutation save failed: \(error.localizedDescription, privacy: .public)")
+            ErrorBannerController.shared.show("Watch sync failed to save: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private func rejected(_ mutation: WatchMutation, reason: String) -> WatchAcknowledgement {
+        WatchAcknowledgement(eventID: mutation.eventID, status: .rejected, reason: reason)
+    }
+
+    private func retryable(_ mutation: WatchMutation, reason: String) -> WatchAcknowledgement {
+        WatchAcknowledgement(eventID: mutation.eventID, status: .retryable, reason: reason)
+    }
+
+    private func sendAcknowledgement(_ acknowledgement: WatchAcknowledgement) {
+        let session = WCSession.default
+        guard session.activationState == .activated else { return }
+
+        let message: [String: Any]
+        do {
+            message = try WatchSyncContract.message(
+                type: .acknowledgement,
+                payload: acknowledgement
+            )
+        } catch {
+            logger.error("Failed to encode Watch acknowledgement: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+
+        // Acknowledgements must survive either process sleeping.
+        session.transferUserInfo(message)
+        if session.isReachable {
+            session.sendMessage(message, replyHandler: nil) { error in
+                logger.error("Immediate Watch acknowledgement failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    // MARK: Durable idempotency ledger
+
+    private func hasProcessed(_ eventID: UUID) -> Bool {
+        processedMutationIDs.contains(eventID.uuidString)
+    }
+
+    private func recordProcessed(_ eventID: UUID) {
+        var ids = processedMutationIDs
+        ids.removeAll(where: { $0 == eventID.uuidString })
+        ids.append(eventID.uuidString)
+        if ids.count > maximumProcessedMutationCount {
+            ids.removeFirst(ids.count - maximumProcessedMutationCount)
+        }
+        UserDefaults.standard.set(ids, forKey: processedMutationDefaultsKey)
+    }
+
+    private var processedMutationIDs: [String] {
+        UserDefaults.standard.stringArray(forKey: processedMutationDefaultsKey) ?? []
     }
 }
-
 
 // MARK: - WCSessionDelegate
 
 extension WatchConnectivityManager: WCSessionDelegate {
-
     nonisolated func session(
         _ session: WCSession,
         activationDidCompleteWith activationState: WCSessionActivationState,
@@ -327,6 +468,9 @@ extension WatchConnectivityManager: WCSessionDelegate {
     ) {
         Task { @MainActor in
             isWatchReachable = session.isReachable
+            if activationState == .activated {
+                sendSyncSnapshot()
+            }
         }
     }
 
@@ -339,29 +483,26 @@ extension WatchConnectivityManager: WCSessionDelegate {
         }
     }
 
-    nonisolated func session(
-        _ session: WCSession,
-        didReceiveMessage message: [String: Any]
-    ) {
-        Task { @MainActor in
-            handleIncoming(message as [String: AnyObject])
-        }
+    nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        Task { @MainActor in handleIncoming(message) }
     }
 
     nonisolated func session(
         _ session: WCSession,
         didReceiveApplicationContext applicationContext: [String: Any]
     ) {
-        Task { @MainActor in
-            handleIncoming(applicationContext as [String: AnyObject])
-        }
+        Task { @MainActor in handleIncoming(applicationContext) }
     }
 
-    // Required for iOS — not called on watchOS
+    nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) {
+        Task { @MainActor in handleIncoming(userInfo) }
+    }
+
     nonisolated func sessionDidBecomeInactive(_ session: WCSession) {}
+
     nonisolated func sessionDidDeactivate(_ session: WCSession) {
         WCSession.default.activate()
     }
 }
 
-#endif // canImport(WatchConnectivity)
+#endif

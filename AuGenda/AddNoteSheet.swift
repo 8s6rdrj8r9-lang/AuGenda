@@ -42,7 +42,9 @@ struct AddNoteSheet: View {
                         do {
                             try modelContext.save()
                         } catch {
+                            modelContext.rollback()
                             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+                            return
                         }
                         dismiss()
                     }

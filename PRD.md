@@ -1,7 +1,7 @@
 # AuGenda — Product Requirements Document (PRD)
 
-**Version:** 1.0  
-**Date:** 2026-07-20  
+**Version:** 1.1
+**Date:** 2026-09-12
 **Product Owner:** Arthur (AuDHD, hEDS, chronic fatigue)  
 **Developer:** ensdev (indie, zero-budget)  
 **Classification:** Internal — Daimon Workspace  
@@ -9,13 +9,45 @@
 
 ---
 
+## How to Read This PRD
+
+Sections 2–12 are the **normative product requirements and intended user
+experience**. They describe what AuGenda should do; they are not assertions
+that every acceptance criterion is implemented, tested, released, or available
+on every configured platform.
+
+Sections 13–14 and §16.1 record **implementation and verification status**.
+Only dated build/test/device evidence may be treated as verified. A source file,
+target, entitlement, checkmark, or prior audit grade is not release evidence by
+itself.
+
+### Implementation update — 2026-09-08
+
+Completion-driven daily, weekday, weekly, and monthly recurrence is implemented;
+launch-time generation, biweekly, and custom rules remain outside that subset.
+Early completion must advance beyond the current occurrence while preserving
+monthly cadence and replay idempotency. Agenda notification privacy and style
+follow the assigned owner, with private/minimal fallback for unavailable or
+unassigned owners. Reminder refresh must preserve snooze deadlines for both
+future and overdue items. These updates supersede the older recurrence status
+in the dated snapshot below; they do not establish device or release validation.
+
 ## 1. Executive Summary
 
 AuGenda is an **indie productivity app built for neurodivergent humans** — specifically those with AuADHD (Autism + ADHD), dyslexia, dyspraxia, PDA, and comorbid physical conditions. It is a native SwiftUI app for iOS, iPad, and macOS with a companion Watch app. Unlike generic todo apps, AuGenda is designed around **friction, energy, sensory load, and initiation cost** rather than urgency and deadlines.
 
 The app has zero external dependencies, no subscription costs, no analytics, and privacy-by-default architecture. It is built for a single user with extreme constraints: no budget, no professional support, 2–4 hour productive windows, chronic fatigue, and zero tolerance for data loss or sudden UI changes.
 
-**Current State:** A-grade codebase, 42 tests, 55 Swift files, 21,500+ lines, production-ready with two manual pre-ship steps (Google OAuth build setting + font files added to Xcode target).
+**Current implementation snapshot (2026-07-24):** active development and
+remediation; not declared shipped or production-ready. The working tree
+contains a file-backed local-only SwiftData app, native Watch and Watch widget
+targets, optional AI integrations, schema migrations, and an expanded unit-test
+suite. Recurrence fields are retained for portability, but no recurrence engine
+or recurring-instance UI is implemented. The current tree passes 85 macOS unit
+tests plus unsigned generic iOS and Watch Release build lanes. It is not a
+release candidate: a full signed matrix, paired-device Watch/App Group QA,
+accessibility/device QA, provider credentials, archive validation, and
+performance/size measurement remain exit gates.
 
 ---
 
@@ -37,7 +69,9 @@ AuGenda exists to provide **virtual cognitive scaffolding** for neurodivergent a
 4. **Data is sacred.** Zero data loss tolerance. Schema migrations are mandatory. Saves are verified. Errors are surfaced, not swallowed.
 5. **$0 budget compatible.** Core functionality must work without spending money on AI, cloud, or third-party services.
 6. **Multi-profile.** A single household can have multiple profiles (e.g., parent + child, or self + partner as coordinator).
-7. **Cross-platform.** iPhone, iPad, Mac, and Watch with data sync via CloudKit (when enabled).
+7. **Cross-platform.** iPhone, iPad, Mac, and Watch. The current implementation
+   is local-only on the main app and uses a phone-authored Watch snapshot
+   contract; CloudKit remains a future product direction.
 
 ---
 
@@ -70,7 +104,8 @@ AuGenda exists to provide **virtual cognitive scaffolding** for neurodivergent a
 
 ### 3.3 Tertiary Persona: The Dyslexic User
 
-- Needs dyslexia-friendly fonts (OpenDyslexic, Atkinson Hyperlegible).
+- Needs dyslexia-friendly typography. The current build uses system Dynamic
+  Type only; approved custom-font options remain an unmet requirement.
 - Needs generous spacing and large touch targets.
 - Needs minimal text density and no ALL CAPS.
 - Needs clear visual hierarchy with color and shape, not just text size.
@@ -106,11 +141,11 @@ AuGenda exists to provide **virtual cognitive scaffolding** for neurodivergent a
 
 AuGenda is built around **six dimensions of task difficulty** rather than a single priority score:
 
-1. **Friction** (1–5): How hard is it to *start* this task? (e.g., making a phone call = friction 5, drinking water = friction 1)
-2. **Energy** (1–3): How much energy does this task consume? (1 = minimal, 3 = draining)
-3. **Sensory Load** (1–5): How much sensory input? (e.g., grocery shopping = sensory 5, reading = sensory 1)
-4. **Social Load** (1–5): How much social interaction? (e.g., team meeting = social 5, solo work = social 1)
-5. **Initiation Cost** (1–5): How much "warming up" is needed? (e.g., creative writing = initiation 5, checking email = initiation 1)
+1. **Friction** (1–4): How hard is it to *start* this task? (1 = easy, 4 = wall)
+2. **Energy** (1–4): How much energy does this task consume? (1 = minimal, 4 = draining)
+3. **Sensory Load** (0–3): How much environmental sensory input is involved?
+4. **Social Load** (0–3): How much synchronous communication is involved?
+5. **Initiation Cost** (0–3): How much first-step paralysis or dread is involved?
 6. **Interest** (1–5): How intrinsically interesting is this task? (hyperfocus fuel)
 
 These six dimensions are fed into a **deterministic Difficulty Engine** that produces a 0–10 rank. This rank is used to sort tasks by "easiest to start" rather than "most urgent."
@@ -146,8 +181,8 @@ Density is auto-calculated from energy level but can be manually overridden (pin
 | **Task Relationships** | Dependencies: "This task blocks that task" | Realistic planning with blocked-by awareness |
 | **AI Enrichment** | Optional AI task breakdown (Claude, OpenAI, Ollama, etc.) | Off by default; local AI free mode available |
 | **Watch Companion** | Quick task completion, energy update, focus session status | Low-friction interaction from wrist |
-| **Export/Import** | JSON, CSV, Markdown, YAML with optional AES-256-GCM encryption | Data portability and backup |
-| **Accessibility** | Dynamic Type, VoiceOver, dyslexia fonts, large touch targets, Reduce Motion | Full ND accessibility stack |
+| **Export/Import** | JSON, CSV, Markdown, YAML, and plain text task-list portability with optional AES-256-GCM encryption | A portable copy of active tasks; not a full-app backup |
+| **Accessibility** | System Dynamic Type today; VoiceOver, touch targets, motion reduction, and future verified font options | Full ND accessibility stack after device validation |
 
 ---
 
@@ -159,7 +194,7 @@ Density is auto-calculated from energy level but can be manually overridden (pin
 **Priority:** Must  
 **Description:** Every task must have the six-axis difficulty dimensions plus interest, time, and context.  
 **Acceptance Criteria:**
-- AC-1.1.1: Task has `frictionLevel` (1–5), `energyRequired` (1–3), `sensoryLoad` (1–5), `socialLoad` (1–5), `initiationCost` (1–5), `interestLevel` (1–5)
+- AC-1.1.1: Task has `frictionLevel` (1–4), `energyRequired` (1–4), `sensoryLoad` (0–3), `socialLoad` (0–3), `initiationCost` (0–3), `interestLevel` (1–5)
 - AC-1.1.2: Task has `estimatedMinutes` (Int) and `totalEstimatedMinutes` (sum of subtask estimates)
 - AC-1.1.3: Task has `ndPriorityScore` computed as `priority * 3.0 + interest * 1.5 - friction * 1.0 - energy * 0.5`
 - AC-1.1.4: Task has `contextTag` (String) for environmental filtering (home, work, outdoors, etc.)
@@ -200,8 +235,11 @@ Density is auto-calculated from energy level but can be manually overridden (pin
 **Description:** Tasks can be exported and imported in multiple formats with optional encryption.  
 **Acceptance Criteria:**
 - AC-1.5.1: Export formats: JSON, CSV, Markdown, YAML, plain text
-- AC-1.5.2: Optional AES-256-GCM encryption with password-derived key (SHA-256)
-- AC-1.5.3: Import detects format automatically from file extension and content
+- AC-1.5.2: Optional AES-256-GCM encryption using a versioned
+  PBKDF2-HMAC-SHA256 password envelope (210,000 iterations); legacy SHA-256
+  envelopes remain readable for migration
+- AC-1.5.3: Import selects format from a supported file extension and strictly
+  validates the selected format before mutation
 - AC-1.5.4: Import accepts JSON, CSV, Markdown, YAML, plain text
 - AC-1.5.5: Encrypted imports decrypt with password before parsing
 - AC-1.5.6: Import prevents duplicates (by `clientID`)
@@ -243,10 +281,11 @@ Density is auto-calculated from energy level but can be manually overridden (pin
 **Description:** Daily planning modal that gates on first launch of each day.  
 **Acceptance Criteria:**
 - AC-2.3.1: Shows on first app launch of each day (checked via `UserDefaults` date)
-- AC-2.3.2: Step 1: Energy picker (1–5)
+- AC-2.3.2: Step 1: Energy picker (1–4)
 - AC-2.3.3: Step 2: Suggested blocks based on energy and scheduled items
 - AC-2.3.4: Step 3: Top 3 tasks sorted by `ndPriorityScore`
-- AC-2.3.5: "Build my day" button saves energy to profile and populates agenda
+- AC-2.3.5: "Save today's capacity" persists energy to the active profile;
+  suggested tasks and blocks are review-only and are not scheduled automatically
 - AC-2.3.6: Can be dismissed and won't show again until tomorrow
 - AC-2.3.7: Survival/Low energy users see fewer suggestions
 
@@ -342,20 +381,29 @@ Density is auto-calculated from energy level but can be manually overridden (pin
 **Priority:** Must  
 **Description:** Per-profile settings with ND-specific options.  
 **Acceptance Criteria:**
-- AC-5.2.1: `currentEnergyLevel` (1–5) with default 3
+- AC-5.2.1: `currentEnergyLevel` (1–4) with default 3
 - AC-5.2.2: `densityMode` (survival/low/functional/high) with auto-calculation from energy
 - AC-5.2.3: `densityPinned` — manual override of auto-calculated density
 - AC-5.2.4: `hyperfocusGuard` (Bool) — enables extra warnings during focus sessions
 - AC-5.2.5: `notificationStyle` (standard/predictable/minimal)
 - AC-5.2.6: `strictPrivacy` (Bool) — defaults to true, redacts notification content
 - AC-5.2.7: `taskLanguageStyle` (formal/casual/playful) — affects task text tone
-- AC-5.2.8: `appFont` (system/atkinson/openDyslexic)
+- AC-5.2.8: `appFont` supports system typography and, when authoritative
+  licensed assets plus device QA are available, approved custom legibility
+  fonts
 - AC-5.2.9: `largeTouchTargets` (Bool) — increases minimum touch size
 - AC-5.2.10: `focusSessionMinutes` (Int) — default session length
 - AC-5.2.11: `uiScale` (Double) — 1.0, 1.25, 1.5 for UI scaling
 - AC-5.2.12: `showCheckInNudges` (Bool) — periodic energy check-in reminders
 - AC-5.2.13: `lowStimulationMode` (Bool) — reduces animation and visual noise
 - AC-5.2.14: `reduceMotion` (Bool) — respects system setting but can be overridden
+
+**Implementation status (2026-07-24):** only the system `AppFont` option is
+presented. It resolves semantic SwiftUI text styles through Dynamic Type. The
+former custom font artifacts and `UIAppFonts` registration were removed because
+they were not valid font binaries. `uiScale`, large-touch-target, and other
+stored preference fields must not be treated as user-facing completed features
+unless the corresponding setting and rendering behavior are both verified.
 
 #### FR-5.3: Household View (HouseholdView)
 **Priority:** Must  
@@ -375,37 +423,52 @@ Density is auto-calculated from energy level but can be manually overridden (pin
 - AC-5.4.3: `AuDHDButton`, `AuDHDCard`, `OptionCard` scale padding and frame heights
 - AC-5.4.4: Future: typography scaling, full view scaling
 
-### 6.6 AI Domain: Optional Enrichment
+**Implementation status (2026-07-24):** this remains a requirement. The
+unsupported custom scale control is not currently exposed; device text size and
+accessibility display settings are the supported scaling path.
+
+### 6.6 AI Domain: Foundation Models & Siri AI Delegation (macOS 27 / iOS 27)
 
 #### FR-6.1: AI Provider System (AITaskEnricher)
-**Priority:** Should  
-**Description:** Pluggable AI provider architecture with opt-in design.  
-**Acceptance Criteria:**
-- AC-6.1.1: Protocol `AITaskEnricher` with `enrich(task:context:)` method
-- AC-6.1.2: 9 providers: appleFoundation, claude, openai, gemini, deepseek, mistral, ollama, perplexity, grok
-- AC-6.1.3: AI is off by default (`enrichmentEnabled: false`)
-- AC-6.1.4: Per-task `excludeFromAI` opt-out
-- AC-6.1.5: API keys stored in Keychain (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` + biometric when available)
-- AC-6.1.6: Generic OAuth2 + PKCE coordinator for providers that require it
-
-#### FR-6.2: AI Usage Ledger (AIUsageLedger)
-**Priority:** Should  
-**Description:** Tracks API usage and enforces cost caps.  
-**Acceptance Criteria:**
-- AC-6.2.1: Tracks per-provider token count, cost, and request count per month
-- AC-6.2.2: `maxMonthlyCostUSD` with picker ($0/$5/$10/$20/$50)
-- AC-6.2.3: `canEnrich()` returns false when monthly cap reached
-- AC-6.2.4: Enforced at all enrichment entry points with `ErrorBanner` feedback
-- AC-6.2.5: Usage visible in `AIEnrichmentSettingsView`
-
-#### FR-6.3: Local AI Only Mode
 **Priority:** Must  
-**Description:** $0 budget mode that hides all paid providers.  
+**Description:** Pluggable AI provider architecture with Apple Foundation Model (`appleFoundation`) as the default engine on macOS 27 / iOS 27, accompanied by an opt-in ChatGPT (`openai`) backup fallback.  
 **Acceptance Criteria:**
-- AC-6.3.1: Toggle in AI settings: "Local AI only (Ollama) — zero cost"
-- AC-6.3.2: When enabled, shows only `appleFoundation` and `ollama`
-- AC-6.3.3: Help text explaining Ollama setup
-- AC-6.3.4: Prevents paid provider API key entry
+- AC-6.1.1: Protocol `AITaskEnricher` with `enrich(task:context:)` method.
+- AC-6.1.2: Providers: `appleFoundation` (Default, on-device), `openai` (ChatGPT Backup), `claude`, `gemini`, `deepseek`, `mistral`, `ollama`, `perplexity`, `grok`.
+- AC-6.1.3: Default provider is `appleFoundation` with 0-token cost and strict on-device data isolation.
+- AC-6.1.4: Per-task `excludeFromAI` opt-out guarantees complete bypass.
+- AC-6.1.5: API keys for cloud providers stored securely in Keychain (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`).
+- AC-6.1.6: ChatGPT Backup Fallback: If `appleFoundation` is unavailable or trips safety guardrails, user-authorized fallback seamlessly routes to ChatGPT (`openai`) while honoring the token ledger.
+
+#### FR-6.2: Siri AI Delegation (App Intents)
+**Priority:** Must  
+**Description:** Native App Intents integration for Siri AI and macOS 27 Spotlight task delegation.  
+**Acceptance Criteria:**
+- AC-6.2.1: `CaptureBrainDumpIntent` exposes fast voice capture to Siri and Spotlight.
+- AC-6.2.2: `EnrichTaskIntent` delegates task restructuring directly to Siri AI using on-device foundation models.
+- AC-6.2.3: `GetTopFocusTaskIntent` enables Siri to retrieve the current low-friction, high-priority task matching current user capacity.
+- AC-6.2.4: Conforms to `AppShortcutsProvider` for immediate zero-setup voice discovery.
+
+#### FR-6.3: AI Usage Ledger & Budget Controls
+**Priority:** Should  
+**Description:** Tracks API usage, enforces cost caps, and records zero-cost metrics for local runs.  
+**Acceptance Criteria:**
+- AC-6.3.1: Tracks per-provider token count, cost, and request count per month (on-device Foundation runs record 0 tokens / $0).
+- AC-6.3.2: `maxMonthlyCostUSD` with picker ($0/$5/$10/$20/$50).
+- AC-6.3.3: `canEnrich()` returns false when monthly cap reached.
+- AC-6.3.4: Enforced at all enrichment entry points with `ErrorBanner` feedback.
+- AC-6.3.5: Usage visible in `AIEnrichmentSettingsView`.
+
+#### FR-6.4: macOS 27 / iOS 27 Architecture & Platform Alignment (Features 1–6)
+**Priority:** Must  
+**Description:** Full alignment with the macOS 27 Golden Gate system capabilities.  
+**Acceptance Criteria:**
+- AC-6.4.1 (Feature 1 - AI & Delegation): On-device Foundation Models default, Siri AI delegation via App Intents, and ChatGPT backup.
+- AC-6.4.2 (Feature 2 - SwiftData Modernization): SwiftData enum predicates for domain models and sectioned query support for time/energy grouping.
+- AC-6.4.3 (Feature 3 - SwiftUI Performance): Adaptive density views with toolbar overflow resilience (`toolbarOverflowMenu`, `visibilityPriority`).
+- AC-6.4.4 (Feature 4 - Apple Silicon Exclusivity): Pure ARM64 compilation, utilizing unified memory architecture for zero-latency local model execution.
+- AC-6.4.5 (Feature 5 - Privacy Boundaries): Strict offline-first operation by default, with clear disclosures for cloud fallback.
+- AC-6.4.6 (Feature 6 - Cognitive Scaffolding): Integration of sensory load, energy tracking, and focus filters without judgmental reminders.
 
 ### 6.7 Watch Domain: Companion App
 
@@ -413,11 +476,23 @@ Density is auto-calculated from energy level but can be manually overridden (pin
 **Priority:** Should  
 **Description:** Bidirectional iPhone ↔ Watch sync.  
 **Acceptance Criteria:**
-- AC-7.1.1: `WatchSyncPayload` includes: next task, energy level, focus state, pending/low-friction counts, pendingRecovery
+- AC-7.1.1: A versioned `WatchSnapshot` includes active-profile-scoped agenda
+  and backlog summaries, energy/density, focus state, pending/low-friction
+  counts, and `pendingRecovery`
 - AC-7.1.2: iPhone sends snapshot on: scene active/background, task complete, snooze, energy change
 - AC-7.1.3: Watch sends: task completed, task snoozed, energy update, sync request
-- AC-7.1.4: `sendMessage` when reachable, `updateApplicationContext` when not
+- AC-7.1.4: Full snapshots use `updateApplicationContext` with `sendMessage` as
+  a reachable latency optimization; Watch mutations use a durable outbox,
+  `transferUserInfo`, event IDs, and phone acknowledgements
 - AC-7.1.5: Graceful degradation when Watch is unreachable
+- AC-7.1.6: Watch app and widget share the latest snapshot and pending-action
+  overlay through App Group `group.ensdev.AuGenda.watch`
+
+**Implementation status (2026-07-24):** the shared source contract, entitlements,
+freshness checks, profile scoping, and outbox tests exist. Developer Portal
+provisioning, signed-entitlement inspection, paired physical iPhone/Watch
+delivery, offline retry, complication reload, and stale-title redaction are not
+yet release-verified.
 
 #### FR-7.2: Watch App (NowView)
 **Priority:** Should  
@@ -443,7 +518,9 @@ Density is auto-calculated from energy level but can be manually overridden (pin
 - AC-8.1.6: `Tokens.Animation` — duration scale (fast/normal/slow), easing curves
 - AC-8.1.7: `Tokens.Layout` — breakpoints, max content width, grid columns
 - AC-8.1.8: `AppColor` palette — 12+ semantic colors with light/dark variants
-- AC-8.1.9: Environment values: `reduceMotion`, `textSizeMultiplier`, `lowStimulationMode`, `uiScale`
+- AC-8.1.9: Environment values include `reduceMotion`,
+  `lowStimulationMode`, `uiScale`, and adaptive `densityMode`; text sizing uses
+  system Dynamic Type rather than a competing custom multiplier
 
 #### FR-8.2: Reusable Components (AuDHDComponents)
 **Priority:** Must  
@@ -456,8 +533,8 @@ Density is auto-calculated from energy level but can be manually overridden (pin
 - AC-8.2.5: `StatusAlert` — non-blocking inline alert (not modal)
 - AC-8.2.6: `ProgressIndicator`, `ProgressRing`, `ProgressSummary` — visual progress
 - AC-8.2.7: `EnergyCheckInCard` — energy self-report prompt
-- AC-8.2.8: `EnergyDots` — visual energy representation (1–5 dots)
-- AC-8.2.9: `FrictionDots` — visual friction representation (1–5 dots)
+- AC-8.2.8: `EnergyDots` — visual energy representation (1–4 dots)
+- AC-8.2.9: `FrictionDots` — visual friction representation (1–4 dots)
 - AC-8.2.10: `HyperfocusWarning` — modal warning during focus sessions
 - AC-8.2.11: `TaskCard` — task display card with all ND metadata
 - AC-8.2.12: `SkeletonLoader` — loading placeholder for async content
@@ -468,12 +545,20 @@ Density is auto-calculated from energy level but can be manually overridden (pin
 **Acceptance Criteria:**
 - AC-8.3.1: Dynamic Type support throughout
 - AC-8.3.2: VoiceOver labels on all interactive elements
-- AC-8.3.3: Dyslexia font support (Atkinson Hyperlegible, OpenDyslexic) with `UIAppFonts` in Info.plist
+- AC-8.3.3: Dyslexia-friendly typography uses system Dynamic Type until
+  authoritative licensed custom fonts, correct bundle registration, and a full
+  accessibility/device test matrix are available
 - AC-8.3.4: Minimum 44pt touch targets (60pt when `largeTouchTargets` enabled)
 - AC-8.3.5: Reduce Motion support via environment value and system setting
 - AC-8.3.6: High contrast and color-blind safe palette
 - AC-8.3.7: ErrorBanner with VoiceOver announcement
 - AC-8.3.8: Resume banner with VoiceOver announcement
+
+**Implementation status (2026-07-24):** semantic Dynamic Type and multiple
+accessibility labels/touch-target fixes are present in source. Full VoiceOver,
+Switch Control, Dynamic Type, Reduce Motion, Increase Contrast, localization,
+contrast, and physical-device coverage remains an exit gate; “full
+accessibility stack” is not a verified current-state claim.
 
 #### FR-8.4: Density-Driven UI
 **Priority:** Must  
@@ -549,7 +634,7 @@ Density is auto-calculated from energy level but can be manually overridden (pin
 
 **Acceptance Criteria:**
 - App detects first launch and shows `CognitiveStateSelector`
-- Step 1: Pick current energy level (1–5) with visual energy dots
+- Step 1: Pick current energy level (1–4) with visual energy dots
 - Step 2: Optional profile setup (name, neurotypes, role)
 - Step 3: Optional onboarding (can be skipped)
 - Survival/Low energy users skip onboarding entirely
@@ -567,7 +652,8 @@ Density is auto-calculated from energy level but can be manually overridden (pin
 - Wizard suggests blocks based on energy and scheduled items
 - Wizard suggests top 3 tasks by actionability
 - I can dismiss it and it won't show again until tomorrow
-- "Build my day" button populates my agenda
+- "Save today's capacity" persists my selected energy without changing tasks
+  or blocks
 
 ### US-3: During a Focus Session
 **As a** user prone to hyperfocus and interruptions  
@@ -654,17 +740,17 @@ Density is auto-calculated from energy level but can be manually overridden (pin
 
 | Layer | Technology | Rationale |
 |-------|-----------|-----------|
-| UI | SwiftUI | Declarative, reactive, native accessibility, Swift 6 strict concurrency |
-| Data | SwiftData | Native Apple framework, CloudKit-ready, `@Query` macro, no external dependencies |
-| Persistence | SQLite (via SwiftData) | Local-first, reliable, no network required |
-| Sync | CloudKit (optional) | Apple's native sync, no custom backend, user-controlled |
+| UI | SwiftUI | Declarative, reactive, native accessibility; currently Swift 5 language mode with staged concurrency settings |
+| Data | SwiftData | Native Apple framework, `@Query` macro, no external dependencies |
+| Persistence | File-backed local SwiftData store | Local-only, migration-versioned, no network required |
+| Future sync | CloudKit (not implemented) | Product direction requiring a separate merge, migration, recovery, entitlement, and multi-device program |
 | Notifications | UNUserNotificationCenter | Native, reliable, per-profile customization |
 | Location | CoreLocation | On-demand, only for outdoor blocks, `kCLLocationAccuracyKilometer` |
 | Weather | WeatherKit | On-device, privacy-preserving, no API key |
-| Speech | SFSpeechRecognizer | On-device recognition (iOS), no network required |
+| Speech | SFSpeechRecognizer | Native dictation path; runtime on-device/network behavior must be verified and disclosed |
 | Crypto | CryptoKit | AES-256-GCM for export encryption, no external crypto library |
-| Keychain | Security framework | API key storage, biometric protection |
-| Watch | WatchConnectivity | Bidirectional sync, no custom protocol |
+| Keychain | Security framework | Secret storage; accessibility and access-control behavior verified per credential flow |
+| Watch | WatchConnectivity + shared versioned contract | Full phone snapshots, durable Watch mutation outbox, acknowledgements, App Group-backed Watch/widget presentation |
 | AI | AITaskEnricher protocol | Pluggable, 9 providers, off by default |
 
 ### 8.2 Architecture Pattern
@@ -686,7 +772,7 @@ AuGendaApp (@main)
 
 ### 8.3 Data Model
 
-**15 SwiftData models** (all CloudKit-compatible with default values):
+**17 SwiftData models** in the main local schema:
 
 | Domain | Models |
 |--------|--------|
@@ -701,6 +787,10 @@ AuGendaApp (@main)
 | Inbox | `InboxItem` |
 
 **Schema versioning:** `VersionedSchema` v1 and v2 with `MigrationPlan`. Lightweight migration between versions.
+
+The main `ModelConfiguration` is file-backed and does not set
+`cloudKitDatabase`. CloudKit-compatible model shapes and comments are not
+evidence that cloud sync is active.
 
 ### 8.4 Singleton Managers
 
@@ -725,14 +815,14 @@ AuGendaApp (@main)
 
 | Layer | Implementation |
 |-------|---------------|
-| API keys | Keychain (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`) + biometric when available |
-| OAuth tokens | Keychain (separate service from API keys) + PKCE verifier |
-| Export encryption | AES-256-GCM with SHA-256 password-derived key |
+| API keys | Keychain; exact accessibility/access-control behavior must be verified per flow and device state |
+| OAuth tokens | Separate Keychain service + PKCE verifier; expiry/refresh and provider registration remain release gates |
+| Export encryption | AES-256-GCM with versioned PBKDF2-HMAC-SHA256 password derivation (210,000 iterations); legacy SHA-256 envelopes are import-only |
 | Notifications | `strictPrivacy` default true — redacts content from lock screen |
 | Local data | SQLite with SwiftData, no custom encryption at rest (Apple-encrypted on device) |
-| Cloud data | CloudKit private database (when enabled) |
+| Cloud data | None in the current production configuration; CloudKit is future scope |
 | Analytics | None — zero external SDKs |
-| Build validation | `validate-oauth.sh` pre-build script checks for placeholder credentials |
+| Build validation | OAuth validation script exists; release gating must invoke it and validate effective build settings |
 
 ---
 
@@ -751,32 +841,54 @@ AuGendaApp (@main)
 - **Data loss:** Zero tolerance. All saves are explicit `do/catch`. Schema migrations are mandatory.
 - **Crash:** Zero tolerance for production crashes. `fatalError` eliminated from app-layer code.
 - **Offline:** Core functionality works entirely offline. AI enrichment requires network (except Apple Foundation + Ollama).
-- **Sync:** CloudKit sync is optional and user-controlled. Local data is never deleted on sync failure.
+- **Future sync:** Any future CloudKit feature must be optional, user-controlled,
+  failure-atomic, and unable to delete local data on sync failure.
+
+These are release requirements, not measured current-state guarantees. Persistence
+failure handling, destructive flows, migration fixtures, and every mutation path
+must pass the release matrix before “zero data loss” is asserted.
 
 ### 9.3 Accessibility
 
 - **WCAG 2.1 AA equivalent:** Color contrast, touch targets, text scaling, motion reduction
 - **Dynamic Type:** All text scales with system settings
 - **VoiceOver:** All interactive elements have labels and hints
-- **Dyslexia support:** Atkinson Hyperlegible and OpenDyslexic fonts (bundled)
-- **Motor accessibility:** `largeTouchTargets` (60pt minimum), `uiScale` (1.25x, 1.5x)
+- **Dyslexia support:** System Dynamic Type now; verified, licensed custom
+  legibility fonts remain future scope
+- **Motor accessibility:** At least 44pt targets and compatibility with system
+  accessibility sizing; custom 60pt/UI-scale modes remain requirements until
+  fully wired and verified
 - **Cognitive accessibility:** Progressive disclosure, consistent patterns, no sudden changes
+
+Every item above is a target. No 100% accessibility claim is accepted without
+the VoiceOver, Switch Control, Dynamic Type, motion, contrast, localization, and
+physical-device evidence defined in §16.1.
 
 ### 9.4 Compatibility
 
-- **iOS:** 17.0+
-- **iPadOS:** 17.0+
-- **macOS:** 14.0+ (Designed for iPad)
-- **watchOS:** 10.0+ (companion app)
-- **Devices:** iPhone 12+, iPad Air 4+, Mac Apple Silicon, Apple Watch Series 7+
+**Product compatibility goal:** iOS/iPadOS 17+, macOS 14+, watchOS 10+, subject
+to an explicit back-deployment implementation and test program.
+
+**Currently configured minimums (2026-07-24):**
+
+- **iOS/iPadOS:** 26.5
+- **macOS:** 26.3
+- **watchOS:** 26.5
+
+The project therefore does not currently meet the broader compatibility goal.
+No device-family support claim (for example iPhone 12, iPad Air 4, or Watch
+Series 7) is verified until the deployment target is compatible and the device
+matrix passes.
 
 ### 9.5 Battery & Resource
 
 - **Location:** Only requested when outdoor block is activated, `kCLLocationAccuracyKilometer` (low power)
 - **WeatherKit:** Only one fetch per outdoor block activation
-- **Background:** No background tasks except notification delivery (`UIBackgroundModes: remote-notification`)
+- **Background:** No main-app background mode is currently declared; local
+  notifications are delivered by the system and Watch transport behavior must
+  be validated under suspension/background conditions
 - **AI:** No persistent AI connections. One-shot API calls only when user explicitly triggers enrichment.
-- **Watch:** Minimal sync payload. No continuous polling.
+- **Watch:** Bounded full snapshots and event mutations; no continuous polling
 
 ---
 
@@ -786,14 +898,14 @@ AuGendaApp (@main)
 
 | Data Type | Classification | Storage |
 |-----------|---------------|---------|
-| Tasks, agenda items, notes | Private | Local SQLite + optional CloudKit private |
-| Profile info, preferences | Private | Local SQLite + optional CloudKit private |
-| API keys (AI providers) | Secret | Keychain (biometric when available) |
+| Tasks, agenda items, notes | Private | Local file-backed SwiftData store |
+| Profile info, preferences | Private | Local file-backed SwiftData store |
+| API keys (AI providers) | Secret | Keychain; access-control behavior depends on the configured credential flow |
 | OAuth tokens | Secret | Keychain (separate service) |
 | Export files | Confidential | User-controlled (encrypted when password set) |
 | AI usage ledger | Private | Local file |
-| Speech transcripts | Private | On-device only (SFSpeechRecognizer) |
-| Location | Sensitive | On-device only, never stored or transmitted |
+| Speech transcripts | Private | Apple speech-recognition path; on-device/network behavior must be verified and disclosed |
+| Location | Sensitive | Requested on demand and provided to Apple WeatherKit for the requested forecast; not persisted by AuGenda |
 
 ### 10.2 Privacy Requirements
 
@@ -802,13 +914,18 @@ AuGendaApp (@main)
 - **AI opt-in:** AI enrichment is off by default. Per-task opt-out available.
 - **Notification privacy:** `strictPrivacy` defaults to true. Task titles never appear on lock screen.
 - **Export control:** User can export their own data. No automatic cloud backup without explicit opt-in.
-- **Key rotation:** OAuth client ID must be rotated before shipping (not in source).
+- **OAuth release configuration:** valid provider-issued client settings and
+  callback schemes must replace placeholders before shipping.
 
 ### 10.3 Compliance
 
 - **GDPR:** User is data controller (local data). Export/erase functionality available.
-- **Apple Privacy:** All required `Info.plist` privacy strings present. No `NSUserTrackingUsageDescription` needed (no tracking).
-- **App Store:** No restricted content. No gambling. No health claims. Wellness app category.
+- **Apple privacy release gate:** reconcile `Info.plist`, privacy manifests, and
+  the App Store privacy questionnaire against all enabled behavior and signed
+  targets. The current source declares no tracking; that declaration still
+  requires release review.
+- **App Store positioning goal:** no restricted content, gambling, or medical
+  claims; final category and metadata require App Review/legal validation.
 
 ---
 
@@ -827,7 +944,7 @@ AI in AuGenda is **optional enrichment, not core functionality**. The app works 
 | **claude** | API | Paid | High (Anthropic) |
 | **openai** | API | Paid | Medium (OpenAI) |
 | **gemini** | API | Paid | Medium (Google) |
-| **deepseek** | API | Paid | Medium (DeepSeek) |
+| **deepseek** | API | Paid | Disabled pending a live release smoke test |
 | **mistral** | API | Paid | Medium (Mistral) |
 | **perplexity** | API | Paid | Medium (Perplexity) |
 | **grok** | API | Paid | Medium (xAI) |
@@ -850,6 +967,10 @@ AI in AuGenda is **optional enrichment, not core functionality**. The app works 
 ---
 
 ## 12. Multi-Platform Support
+
+This section defines the intended product surface. Configured targets and
+source branches do not establish feature parity; each platform still requires
+the dated release matrix in §16.1.
 
 ### 12.1 iPhone (Primary)
 
@@ -876,44 +997,60 @@ AI in AuGenda is **optional enrichment, not core functionality**. The app works 
 
 ### 12.4 Apple Watch (Companion)
 
-- Display-only (no persistent data)
-- Syncs from iPhone via WatchConnectivity
-- Shows next task, energy, focus status
-- Quick actions: complete, snooze, energy update, sync request
-- Recovery card when interruption detected
+- Phone is the durable task source of truth
+- Receives versioned, active-profile-scoped full snapshots through
+  WatchConnectivity
+- Persists the latest presentation snapshot and mutation outbox in the Watch
+  App Group shared with the widget
+- Shows agenda/backlog context, energy, density, focus, and recovery state
+- Queues complete, snooze, energy, and capture mutations until the phone
+  acknowledges them
+- Widget/complication reads the same fresh presentation snapshot
+
+**Verification boundary:** the source contract and test seams exist, but App
+Group provisioning, paired-device transport, offline convergence, complication
+refresh, freshness redaction, and cross-profile isolation remain physical-device
+release gates.
 
 ---
 
 ## 13. Roadmap
 
-### 13.1 v1.0 — Shipped (Current State)
+### 13.1 v1.0 — Active Release Candidate (Not Shipped)
 
-- ✅ Core task management with six-axis difficulty
-- ✅ Agenda items with recurrence
-- ✅ Focus sessions with interruption tracking
-- ✅ Block system with weather
-- ✅ Multi-profile household
-- ✅ Brain dump with voice
-- ✅ Smart suggest (AI-free ranking)
-- ✅ Design system and accessibility
-- ✅ Watch companion
-- ✅ Export/import with encryption
-- ✅ Schema migration
-- ✅ Error handling and data safety
-- ✅ 42 tests, A-grade codebase
+The working tree contains implementation for the following areas, but this list
+is an inventory rather than a completion claim:
+
+- Core task/agenda/backlog flows and deterministic difficulty ranking
+- Focus sessions and interruption tracking
+- Blocks, multi-profile household, brain dump, and smart suggestions
+- Export/import, encrypted export envelopes, and v1-to-v2 schema migration
+- Optional AI-provider architecture and privacy/cost controls
+- Watch app, shared snapshot/outbox contract, and Watch widget
+- Semantic system Dynamic Type and accessibility remediation
+
+Release status remains **not verified**. Required gates include the full current
+build/test matrix, migration and mutation failure-path coverage, signed Release
+archives, OAuth/provider configuration, WeatherKit/App Group provisioning,
+paired-device Watch QA, privacy review, accessibility/device QA, and measured
+performance/size.
 
 ### 13.2 v1.1 — Next Sprint
 
-- [ ] Task dependency filtering in "For Now" view (hide blocked tasks)
+- [x] Task dependency filtering in "For Now" view (hide blocked tasks)
 - [ ] Full note search and independent note list
 - [ ] Deep adaptive CognitiveProfile (energy-by-hour, completion accuracy)
-- [ ] Integration tests for AI enrichers, Watch sync, OAuth
-- [ ] Monthly/biweekly recurrence support
-- [ ] App Store submission (after CloudKit activation)
+- [ ] Credentialed integration tests for AI enrichers and OAuth; paired-device
+      integration tests for Watch sync
+- [ ] Implement and verify the recurrence engine (daily, weekly, weekdays,
+      monthly, biweekly, and future custom rules)
+- [ ] App Store submission after the release gates above; CloudKit is not a v1
+      prerequisite unless separately implemented
 
 ### 13.3 v1.2 — Medium Term
 
-- [ ] Widgets (Home Screen + Lock Screen)
+- [ ] iPhone/iPad Home Screen and Lock Screen widgets; the current widget target
+      is Watch-only
 - [ ] Shortcuts app integration (Siri)
 - [ ] Time tracking per task (actual vs estimated)
 - [ ] Energy pattern visualization (charts)
@@ -937,14 +1074,14 @@ AI in AuGenda is **optional enrichment, not core functionality**. The app works 
 
 ### 14.1 Technical Metrics
 
-| Metric | Target | Current |
+| Metric | Target | Latest verified evidence |
 |--------|--------|---------|
-| Test coverage | >80% | ~45% (42 tests) |
-| Production crashes | 0 | 0 |
-| Data loss incidents | 0 | 0 |
-| Build time | <30s | ~25s |
-| App size | <50MB | ~15MB |
-| Memory usage | <100MB | ~60MB |
+| Production line coverage | >80% | 7.5475% (2,942 / 38,980 lines) on the 2026-07-24 post-remediation macOS unit result |
+| Production crashes | 0 | Not measurable before release without a defined reporting process |
+| Data loss incidents | 0 | No release population; failure-path verification still in progress |
+| Build time | <30s | Current tree not measured under a controlled configuration |
+| Release install/download size | <50MB | Not measured; a prior Debug bundle is not release-size evidence |
+| Memory usage | <100MB | Current tree not measured on the supported device matrix |
 
 ### 14.2 User Metrics (Post-Launch)
 
@@ -967,9 +1104,13 @@ AI in AuGenda is **optional enrichment, not core functionality**. The app works 
 |--------|--------|
 | VoiceOver compatibility | 100% of interactive elements |
 | Dynamic Type support | 100% of text elements |
-| Touch target compliance | 100% ≥44pt (100% ≥60pt with largeTouchTargets) |
+| Touch target compliance | 100% ≥44pt |
 | Reduce Motion support | 100% of animations |
-| Dyslexia font support | 100% of text (when font enabled) |
+| System Dynamic Type | 100% of user-visible text |
+| Custom dyslexia-font option | Future: 100% only after asset/license/bundle/device verification |
+
+These are targets. None is recorded as a current 100% pass without the dated
+manual and automated evidence in §16.1.
 
 ---
 
@@ -982,27 +1123,70 @@ AI in AuGenda is **optional enrichment, not core functionality**. The app works 
 | **Density mode** | UI complexity level: Survival, Low, Functional, High |
 | **Difficulty Engine** | Six-axis deterministic ranking algorithm (friction, energy, sensory, social, initiation, interest) |
 | **EF** | Executive Function — the cognitive skills that control and regulate behavior |
-| **Friction** | How hard it is to start a task (1–5) |
+| **Friction** | How hard it is to start a task (1–4) |
 | **hEDS** | Hypermobile Ehlers-Danlos Syndrome — a connective tissue disorder |
 | **Hyperfocus** | Intense, sustained concentration that can last hours and disrupt schedules |
-| **Initiation cost** | The "warming up" required before a task can be started (1–5) |
+| **Initiation cost** | The "warming up" required before a task can be started (0–3) |
 | **ND** | Neurodivergent — brains that function differently from the societal standard |
 | **ndPriorityScore** | AuGenda's actionability ranking: higher = more worth doing right now |
 | **PDA** | Pathological Demand Avoidance — a profile where demands trigger anxiety and resistance |
-| **Sensory load** | How much sensory input a task generates (1–5) |
-| **Social load** | How much social interaction a task requires (1–5) |
+| **Sensory load** | How much sensory input a task generates (0–3) |
+| **Social load** | How much social interaction a task requires (0–3) |
 | **Survival mode** | The lowest energy state where only the absolute minimum is shown |
 
 ---
 
 ## 16. Appendices
 
-### 16.1 Audit Reports
+### 16.1 Dated Verification and Audit Evidence
 
-- v1 (pre-remediation): `audit-report.md` — C+ grade, 15 blockers
-- v2 (post-Runs 1–3): `audit-report-v2.md` — B grade, 25 blockers
-- v3 (post-Runs 1–6): `audit-report-v3.md` — A- grade, 9 gaps
-- v4 (final verification): `audit-report-v4.md` — A grade, production-ready
+The current authoritative audit set is:
+`audits/2026-07-24-code-augenda-all-domain/`. Its baseline verification was
+captured before the remediation edits now in the working tree.
+
+**Verified on 2026-07-24 for that pre-remediation snapshot:**
+
+- macOS main unit suite: **46 passed, 0 failed, 0 skipped**;
+- production line coverage in that macOS result:
+  **4,161 / 35,484 lines (11.7264%)**;
+- unsigned iOS Simulator unit suite: **43 passed, 3 failed**, with all three
+  failures caused by unsigned Keychain entitlement errors;
+- focused signed iOS Keychain rerun: **5 passed, 0 failed**;
+- Watch/widget code compiled as dependencies of the signed main scheme; the
+  standalone Watch flow was blocked by unavailable CoreSimulator services.
+
+The test suite and production code have changed since that baseline. Therefore
+these counts are **historical evidence, not current-tree pass or coverage
+claims**.
+
+**Verified on 2026-07-24 for the post-remediation working tree:**
+
+- macOS main unit suite: **85 passed, 0 failed, 0 skipped**;
+- production line coverage in that result:
+  **2,942 / 38,980 lines (7.5475%)** for `AuGenda.app`;
+- unsigned generic iOS Release build succeeded, including embedded Watch and
+  widget dependencies;
+- unsigned generic watchOS Release `build-for-testing` succeeded with
+  testability enabled for the test product;
+- Release package inspection found none of the former prompt, README, script,
+  or invalid-font resources;
+- Swift parse, plist/entitlement/privacy-manifest, workflow YAML, project-file,
+  shell syntax, asset JSON, diff whitespace, and targeted secret checks passed.
+
+**Still unverified as of 2026-07-24:**
+
+- simulator and physical-device UI journeys across iPhone, iPad, Mac, and
+  Watch, including the Watch unit/UI runners;
+- signed Release archives, effective entitlements, validation/notarization,
+  release install/download size, memory, and performance;
+- paired physical iPhone/Watch behavior and App Group provisioning;
+- full VoiceOver, Switch Control, Dynamic Type, Reduce Motion, Increase
+  Contrast, localization, and physical-device accessibility;
+- release Google OAuth, WeatherKit, Ollama, and external AI credentials;
+- App Store privacy questionnaire and final legal/release review.
+
+Historical grade-labelled audit reports may be useful provenance, but their
+grades and “production-ready” wording are not current release evidence.
 
 ### 16.2 Remediation Prompt
 
@@ -1018,13 +1202,20 @@ AI in AuGenda is **optional enrichment, not core functionality**. The app works 
 ```bash
 # iOS Simulator build
 cd /Users/arthur/Development/AuGenda
-xcodebuild -project AuGenda.xcodeproj -scheme AuGenda -destination 'platform=iOS Simulator,name=iPhone 17' clean build
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+xcodebuild -project AuGenda.xcodeproj -scheme AuGenda \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
 
 # macOS build
-xcodebuild -project AuGenda.xcodeproj -scheme AuGenda -destination 'platform=macOS' clean build
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+xcodebuild -project AuGenda.xcodeproj -scheme AuGenda \
+  -destination 'platform=macOS' build
 
-# Run tests
-xcodebuild -project AuGenda.xcodeproj -scheme AuGenda -destination 'platform=iOS Simulator,name=iPhone 17' test
+# Run main unit tests
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+xcodebuild -project AuGenda.xcodeproj -scheme AuGenda \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -only-testing:AuGendaTests test
 
 # Validate OAuth placeholder
 bash AuGenda/Scripts/validate-oauth.sh
@@ -1034,4 +1225,14 @@ bash AuGenda/Scripts/validate-oauth.sh
 
 *End of PRD.*
 *Document maintained by the Daimon workspace agent.*
-*Last updated: 2026-07-20*
+*Last updated: 2026-07-24*
+
+### Mac local store isolation (2026-09-12)
+
+New native Mac stores use `Application Support/ensdev.AuGenda/AuGenda.store`
+with CloudKit explicitly disabled. Before using that location, startup checks
+an existing legacy `Application Support/default.store` using read-only model
+metadata. Recognized AuGenda stores continue at their existing path; unrelated
+apps' stores are left untouched. Unreadable legacy metadata still produces the
+recovery surface rather than silently creating an empty account. Existing
+dedicated stores take precedence. iOS store placement is unchanged.

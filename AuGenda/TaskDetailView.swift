@@ -26,6 +26,7 @@ struct TaskDetailView: View {
 
     @State private var showJustStart = false
     @State private var showEdit = false
+    @State private var showAbandonDialog = false
     @State private var completedAnimation = false
 
     // AI enrichment
@@ -35,6 +36,7 @@ struct TaskDetailView: View {
     @StateObject private var personalization = PersonalizationStore.shared
 
     @State private var isEnriching = false
+    @State private var enrichmentTask: Task<Void, Never>? = nil
     @State private var pendingEnrichment: TaskEnrichment? = nil
     @State private var showEnrichmentPreview = false
     @State private var enrichmentError: String? = nil
@@ -60,7 +62,10 @@ struct TaskDetailView: View {
     }
 
     private var canEnrich: Bool {
-        aiEnabled && showEnrichButtons && !task.excludeFromAI && !activeProviderRaw.isEmpty
+        aiEnabled
+            && showEnrichButtons
+            && !task.excludeFromAI
+            && AIProvider(rawValue: activeProviderRaw)?.isReleaseEnabled == true
     }
 
     private var sortedSteps: [TaskStep] {
@@ -113,6 +118,10 @@ struct TaskDetailView: View {
                         )
                         if !task.contextTag.isEmpty {
                             MetaBadge(icon: "tag", label: task.contextTag)
+                        }
+                        if let recurrence = RecurrenceRule(rawValue: task.recurrenceRule),
+                           recurrence != .none {
+                            MetaBadge(icon: "repeat", label: recurrence.displayName)
                         }
                     }
 
@@ -220,6 +229,7 @@ struct TaskDetailView: View {
                                     do {
                                         try modelContext.save()
                                     } catch {
+                                        modelContext.rollback()
                                         ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
                                     }
                                 }
@@ -306,10 +316,24 @@ struct TaskDetailView: View {
                             .scaleEffect(completedAnimation ? 1.04 : 1.0)
                         }
 
+                        if !task.isComplete && !task.isAbandoned {
+                            Button(role: .destructive) {
+                                showAbandonDialog = true
+                            } label: {
+                                Label("Abandon Task", systemImage: "archivebox")
+                                    .font(.subheadline)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(14)
+                            }
+                            .buttonStyle(.bordered)
+                            .accessibilityHint("Removes this task from active lists and records why")
+                        }
+
                         // AI enrichment
                         if canEnrich {
                             Button {
-                                Task { await runEnrichment() }
+                                enrichmentTask?.cancel()
+                                enrichmentTask = Task { await runEnrichment() }
                             } label: {
                                 HStack(spacing: 8) {
                                     if isEnriching {
@@ -382,8 +406,9 @@ struct TaskDetailView: View {
                         enrichment: enrichment,
                         allowInterestInference: personalization.allowInterestInference,
                         onApply: {
-                            applyEnrichment(enrichment)
-                            showEnrichmentPreview = false
+                            if applyEnrichment(enrichment) {
+                                showEnrichmentPreview = false
+                            }
                         },
                         onDismiss: { showEnrichmentPreview = false }
                     )
@@ -405,6 +430,24 @@ struct TaskDetailView: View {
             } message: { msg in
                 Text(msg)
             }
+            .confirmationDialog(
+                "Why are you abandoning this task?",
+                isPresented: $showAbandonDialog,
+                titleVisibility: .visible
+            ) {
+                Button("No longer needed", role: .destructive) {
+                    abandonTask(reason: "No longer needed")
+                }
+                Button("Blocked indefinitely", role: .destructive) {
+                    abandonTask(reason: "Blocked indefinitely")
+                }
+                Button("Not mine to do", role: .destructive) {
+                    abandonTask(reason: "Not mine to do")
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The task leaves active lists while its abandonment reason remains in saved data.")
+            }
             .sheet(isPresented: $showAddNote) {
                 AddNoteSheet(relatedTaskID: task.clientID, relatedItemID: nil)
                     #if os(iOS)
@@ -415,6 +458,17 @@ struct TaskDetailView: View {
             .onAppear {
                 fetchRelationships()
             }
+            .onChange(of: aiEnabled) { _, isEnabled in
+                if !isEnabled {
+                    enrichmentTask?.cancel()
+                    enrichmentTask = nil
+                    isEnriching = false
+                }
+            }
+            .onDisappear {
+                enrichmentTask?.cancel()
+                enrichmentTask = nil
+            }
         }
     }
 
@@ -422,10 +476,19 @@ struct TaskDetailView: View {
 
     @MainActor
     private func runEnrichment() async {
+        if let reason = AIUsageLedger.shared.enrichmentPauseReason {
+            enrichmentError = reason
+            ErrorBannerController.shared.show(reason)
+            return
+        }
         guard let provider = AIProvider(rawValue: activeProviderRaw),
               let enricher = AIEnricherRegistry.enricher(for: provider) else { return }
 
         isEnriching = true
+        defer {
+            isEnriching = false
+            enrichmentTask = nil
+        }
 
         let neurotypes = profileManager.activeProfile?.neurotypes.map(\.displayName) ?? []
         let prefs = profileManager.activePreferences
@@ -442,52 +505,46 @@ struct TaskDetailView: View {
 
         do {
             let result = try await enricher.enrich(context: context)
+            try Task.checkCancellation()
+            // Fix F-004: Decouple token/request debiting from task persistence.
+            // Log the provider request and token metadata immediately upon receiving a response,
+            // irrespective of whether the user taps "Apply" or "Discard".
+            AIUsageLedger.shared.record(result)
             pendingEnrichment = result
             showEnrichmentPreview = true
+        } catch is CancellationError {
+            // Calm exit without error banner on cancellation
         } catch {
             enrichmentError = (error as? LocalizedError)?.errorDescription
                 ?? error.localizedDescription
             ErrorBannerController.shared.show("AI enrichment failed: \(error.localizedDescription)")
         }
-
-        isEnriching = false
     }
 
-    private func applyEnrichment(_ enrichment: TaskEnrichment) {
-        if let t = enrichment.title, !t.isEmpty { task.title = t }
-        if let desc = enrichment.taskDescription, !desc.isEmpty, task.notes.isEmpty {
-            task.notes = desc
-        }
-        if let f = enrichment.friction      { task.frictionLevel   = f }
-        if let e = enrichment.energy        { task.energyRequired  = e }
-        if let s = enrichment.sensoryLoad   { task.sensoryLoad     = s }
-        if let c = enrichment.socialLoad    { task.socialLoad      = c }
-        if let i = enrichment.initiationCost { task.initiationCost = i }
-        if let n = enrichment.interest, personalization.allowInterestInference {
-            task.interestLevel = n
-        }
-        if let mins = enrichment.estimatedMinutes { task.estimatedMinutes = mins }
-        if let ctx = enrichment.contextTag, !ctx.isEmpty { task.contextTag = ctx }
-
-        if let subTasks = enrichment.subTasks, !subTasks.isEmpty {
-            let existingCount = task.steps?.count ?? 0
-            for (i, stepTitle) in subTasks.enumerated() {
-                let step = TaskStep(title: stepTitle, sortOrder: existingCount + i)
-                step.parentTask = task
-                modelContext.insert(step)
-            }
-        }
-
-        task.updatedAt = .now
+    @discardableResult
+    private func applyEnrichment(_ enrichment: TaskEnrichment) -> Bool {
         do {
-            try modelContext.save()
+            let outcome = try AIEnrichmentMutation.apply(
+                enrichment,
+                to: task,
+                allowInterestInference: personalization.allowInterestInference,
+                in: modelContext
+            )
+            if let warning = outcome.userFacingWarning {
+                ErrorBannerController.shared.show(warning)
+            }
+            return true
         } catch {
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            return false
         }
-        personalization.recordEnrichment(title: task.title, band: task.difficultyBand)
     }
 
     private func markComplete() {
+        guard task.isActionable(in: modelContext) else {
+            ErrorBannerController.shared.show("Complete the blocking task first.")
+            return
+        }
         #if os(iOS)
         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
         #endif
@@ -500,16 +557,29 @@ struct TaskDetailView: View {
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            ActivityLog.recordCompletion()
-            task.isComplete = true
-            task.completedAt = .now
-            task.updatedAt = .now
             do {
-                try modelContext.save()
+                try TaskLifecycleService.complete(task, in: modelContext)
             } catch {
                 ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+                return
             }
+            ActivityLog.recordCompletion()
             dismiss()
+        }
+    }
+
+    private func abandonTask(reason: String) {
+        do {
+            try TaskLifecycleService.abandon(
+                task,
+                reason: reason,
+                in: modelContext
+            )
+            dismiss()
+        } catch {
+            ErrorBannerController.shared.show(
+                "Couldn't abandon task: \(error.localizedDescription)"
+            )
         }
     }
 
@@ -728,8 +798,10 @@ struct TaskStepRow: View {
                 Image(systemName: step.isComplete ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
                     .foregroundStyle(step.isComplete ? Color.appAccent : .secondary)
+                    .frame(minWidth: 44, minHeight: 44)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(step.isComplete ? "Mark \(step.title) incomplete" : "Mark \(step.title) complete")
 
             Text(step.title)
                 .font(.subheadline)
@@ -759,6 +831,7 @@ struct JustStartView: View {
 
     @State private var committed = false
     @State private var startedAt: Date? = nil
+    @ScaledMetric(relativeTo: .largeTitle) private var elapsedFontSize: CGFloat = 56
 
     private var firstPendingStep: String {
         task.steps?
@@ -843,7 +916,7 @@ struct JustStartView: View {
 
                             VStack(spacing: 6) {
                                 Text(formatElapsed(elapsed))
-                                    .font(.system(size: 56, weight: .bold, design: .rounded))
+                                    .font(.system(size: elapsedFontSize, weight: .bold, design: .rounded))
                                     .monospacedDigit()
                                     .foregroundStyle(twoMinutes ? .green : Color.appAccent)
 

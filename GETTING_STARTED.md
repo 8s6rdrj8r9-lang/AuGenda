@@ -13,17 +13,14 @@
 4. Configure Google OAuth (optional):
    - Create an iOS OAuth client in Google Cloud Console
    - Set `AUGENDA_GOOGLE_CLIENT_ID` in Xcode Build Settings → User-Defined
-5. Add font files to the Xcode target (see `AuGenda/Fonts/README.md`)
-6. Build and run on iOS Simulator
+5. Build and run on iOS Simulator (uses Apple system typography; no custom font binaries required)
 
-## CloudKit (Optional)
-CloudKit is disabled by default. To enable:
-1. Register `iCloud.com.augenda.AuGenda` in Apple Developer Portal
-2. Change `AppContainer.dev` to `AppContainer.production` in `AuGendaApp.swift`
-3. Add `CloudKit` capability to the app target
+## Persistence Architecture
+AuGenda is strictly local-first and file-backed via SwiftData (`AppContainer.makePersistentLocalStartupState()`).
+There is zero CloudKit sync configured or enabled. UI tests launch with an in-memory container via `-ui-testing`.
 
 ## AI Providers (Optional)
 AI enrichment is off by default. To enable:
 - Go to Settings → AI Enrichment
-- Select a provider and enter your API key
-- Or enable "Local AI only" for zero-cost Ollama
+- Select a provider and enter your API key (stored securely in Keychain)
+- Or enable "Local AI only" for zero-cost on-device Apple Intelligence or self-hosted Ollama

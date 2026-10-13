@@ -170,7 +170,7 @@ struct AppleEnrichmentSchema {
     @Guide(description: "Realistic ND-aware time estimate in minutes")
     var estimatedMinutes: Int
 
-    @Guide(description: "Context tag: home, phone, computer, errand, etc.")
+    @Guide(description: "Context tag, exactly one of: home, computer, phone, outside, focus, errand")
     var contextTag: String?
 
     @Guide(description: "Best time of day: morning, afternoon, evening, any")

@@ -259,7 +259,7 @@ struct InterruptionRecoveryPrompt: View {
                     // Header
                     VStack(spacing: Tokens.Spacing.sm) {
                         Text("👋")
-                            .font(.system(size: 40))
+                            .font(.largeTitle)
 
                         Text("Welcome back")
                             .font(Tokens.Typography.h2)
@@ -276,7 +276,7 @@ struct InterruptionRecoveryPrompt: View {
                     if let item = lastItem {
                         HStack(spacing: Tokens.Spacing.base) {
                             Image(systemName: "clock.arrow.circlepath")
-                                .font(.system(size: 18, weight: .semibold))
+                                .font(.title3.weight(.semibold))
                                 .foregroundColor(Tokens.Color.info)
                                 .frame(width: 24)
 
@@ -427,11 +427,13 @@ struct TaskCard: View {
                 completeItem()
             } label: {
                 Image(systemName: item.isComplete ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.title2.weight(.semibold))
                     .foregroundColor(item.isComplete ? Tokens.Color.success : Color.appBorder)
                     .frame(width: Tokens.Spacing.touchMinimum, height: Tokens.Spacing.touchMinimum)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(item.isComplete ? "\(item.title), completed" : "Mark \(item.title) complete")
+            .accessibilityHint(item.isComplete ? "This task is already complete" : "Marks this task complete")
 
             // Title + metadata
             VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
@@ -462,7 +464,7 @@ struct TaskCard: View {
                     // Context tag
                     if !item.contextTag.isEmpty {
                         Text(item.contextTag)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.caption2.weight(.medium))
                             .padding(.horizontal, Tokens.Spacing.sm)
                             .padding(.vertical, 2)
                             .background(Color.appBackgroundSecondary)
@@ -476,7 +478,7 @@ struct TaskCard: View {
 
             // Expand chevron
             Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.caption.weight(.semibold))
                 .foregroundColor(Color.appTextSecondary)
                 .frame(width: Tokens.Spacing.touchMinimum, height: Tokens.Spacing.touchMinimum)
         }
@@ -531,8 +533,12 @@ struct TaskCard: View {
                     Label("Snooze", systemImage: "zzz")
                         .font(Tokens.Typography.label)
                         .foregroundColor(Color.appTextSecondary)
+                        .frame(minHeight: Tokens.Spacing.touchMinimum)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Snooze \(item.title)")
+                .accessibilityHint("Choose how long to hide this task")
 
                 if item.needsBodyDouble {
                     Label("Body double", systemImage: "person.wave.2.fill")
@@ -577,33 +583,37 @@ struct TaskCard: View {
     // MARK: - Actions
 
     private func completeItem() {
-        ActivityLog.recordCompletion()
-        withAnimation(Tokens.Animation.standardSpring()) {
-            item.isComplete = true
-            item.completedAt = .now
-            item.updatedAt = .now
-        }
-        notificationManager.cancelNotifications(for: item)
         do {
-            try modelContext.save()
+            let next = try AgendaItemLifecycleService.complete(
+                item,
+                in: modelContext
+            )
+            if let next {
+                notificationManager.scheduleNotifications(for: next)
+            }
         } catch {
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            return
         }
+        ActivityLog.recordCompletion()
+        notificationManager.cancelNotifications(for: item)
         #if canImport(WatchConnectivity)
         watchManager.sendSyncSnapshot()
         #endif
     }
 
     private func snooze(minutes: Int) {
-        ActivityLog.recordSnooze()
-        notificationManager.snooze(item: item, minutes: minutes)
         item.snoozedUntil = Date.now.addingTimeInterval(Double(minutes) * 60)
         item.updatedAt = .now
         do {
             try modelContext.save()
         } catch {
+            modelContext.rollback()
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            return
         }
+        ActivityLog.recordSnooze()
+        notificationManager.snooze(item: item, minutes: minutes)
         #if canImport(WatchConnectivity)
         watchManager.sendSyncSnapshot()
         #endif
@@ -620,20 +630,25 @@ struct SubtaskRow: View {
     var body: some View {
         HStack(spacing: Tokens.Spacing.sm) {
             Button {
+                let wasComplete = subtask.isComplete
                 withAnimation(Tokens.Animation.standardEase()) {
                     subtask.isComplete.toggle()
-                    do {
-                        try modelContext.save()
-                    } catch {
-                        ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
-                    }
+                }
+                do {
+                    try modelContext.save()
+                } catch {
+                    modelContext.rollback()
+                    subtask.isComplete = wasComplete
+                    ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
                 }
             } label: {
                 Image(systemName: subtask.isComplete ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.headline)
                     .foregroundColor(subtask.isComplete ? Tokens.Color.success : Color.appBorder)
+                    .frame(minWidth: Tokens.Spacing.touchMinimum, minHeight: Tokens.Spacing.touchMinimum)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(subtask.isComplete ? "Mark \(subtask.title) incomplete" : "Mark \(subtask.title) complete")
 
             Text(subtask.title)
                 .font(Tokens.Typography.body)
@@ -861,7 +876,7 @@ struct HyperfocusWarning: View {
                 HStack(spacing: Tokens.Spacing.base) {
                     // Icon
                     Image(systemName: "timer.circle.fill")
-                        .font(.system(size: 24, weight: .semibold))
+                        .font(.title2.weight(.semibold))
                         .foregroundColor(Tokens.Color.warning)
 
                     // Message
@@ -1207,7 +1222,7 @@ struct PrimaryAgendaCard: View {
                 HStack(spacing: Tokens.Spacing.sm) {
                     if let icon = ctaIcon {
                         Image(systemName: icon)
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.headline)
                     }
                     Text(ctaLabel)
                         .font(Tokens.Typography.label)
@@ -1304,13 +1319,13 @@ struct MomentumTaskCard: View {
 
                             if surface.needsBodyDouble {
                                 Image(systemName: "person.wave.2.fill")
-                                    .font(.system(size: 10))
+                                    .font(.caption2)
                                     .foregroundColor(Tokens.Color.info)
                             }
 
                             if surface.hyperfocusRisk {
                                 Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.system(size: 10))
+                                    .font(.caption2)
                                     .foregroundColor(Tokens.Color.warning)
                             }
 
@@ -1390,7 +1405,7 @@ struct RecoveryContextCard: View {
                 // Header
                 HStack(spacing: Tokens.Spacing.sm) {
                     Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(.title3.weight(.semibold))
                         .foregroundColor(Tokens.Color.info)
                         .accessibilityHidden(true)
                     Text("You were here \(gapDescription) ago")
@@ -1453,7 +1468,7 @@ struct RecoveryContextCard: View {
             HStack(spacing: Tokens.Spacing.sm) {
                 if let icon = icon {
                     Image(systemName: icon)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                 }
                 Text(title)
                     .font(Tokens.Typography.label)

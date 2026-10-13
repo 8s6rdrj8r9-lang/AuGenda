@@ -21,34 +21,6 @@
                ReferencedContainer = "container:AuGenda.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
-         <BuildActionEntry
-            buildForTesting = "YES"
-            buildForRunning = "YES"
-            buildForProfiling = "YES"
-            buildForArchiving = "YES"
-            buildForAnalyzing = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "8EDD1E3B2FC3B0B8008482EC"
-               BuildableName = "AuGenda.app"
-               BlueprintName = "AuGenda"
-               ReferencedContainer = "container:AuGenda.xcodeproj">
-            </BuildableReference>
-         </BuildActionEntry>
-         <BuildActionEntry
-            buildForTesting = "YES"
-            buildForRunning = "YES"
-            buildForProfiling = "YES"
-            buildForArchiving = "YES"
-            buildForAnalyzing = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "8E5A8CEF2FCA96C90018EA71"
-               BuildableName = "AuGendaWatch Watch App.app"
-               BlueprintName = "AuGendaWatch Watch App"
-               ReferencedContainer = "container:AuGenda.xcodeproj">
-            </BuildableReference>
-         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -75,16 +47,16 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "8EDD1E3B2FC3B0B8008482EC"
-            BuildableName = "AuGenda.app"
-            BlueprintName = "AuGenda"
+            BlueprintIdentifier = "8E5A8CEF2FCA96C90018EA71"
+            BuildableName = "AuGendaWatch Watch App.app"
+            BlueprintName = "AuGendaWatch Watch App"
             ReferencedContainer = "container:AuGenda.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
       <EnvironmentVariables>
          <EnvironmentVariable
             key = "_XCWidgetKind"
-            value = ""
+            value = "AuGendaNowWidget"
             isEnabled = "YES">
          </EnvironmentVariable>
          <EnvironmentVariable
@@ -94,7 +66,7 @@
          </EnvironmentVariable>
          <EnvironmentVariable
             key = "_XCWidgetFamily"
-            value = "systemMedium"
+            value = "accessoryRectangular"
             isEnabled = "YES">
          </EnvironmentVariable>
       </EnvironmentVariables>

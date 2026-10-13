@@ -1,0 +1,42 @@
+{
+  "devicesAndConfigurations": [
+    {
+      "device": {
+        "architecture": "arm64",
+        "deviceName": "My Mac",
+        "modelName": "MacBook Air",
+        "osBuildNumber": "25G83",
+        "osVersion": "26.6.2",
+        "platform": "macOS"
+      },
+      "expectedFailures": 0,
+      "failedTests": 0,
+      "passedTests": 129,
+      "skippedTests": 0,
+      "testPlanConfiguration": {
+        "configurationId": "1",
+        "configurationName": "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription": "AuGenda \u00b7 Built with macOS 26.6.2",
+  "expectedFailures": 0,
+  "failedTests": 0,
+  "finishTime": 1791406280.489,
+  "passedTests": 129,
+  "result": "Passed",
+  "runtimeWarnings": [],
+  "skippedTests": 0,
+  "startTime": 1791406196.412,
+  "statistics": [],
+  "testFailures": [],
+  "title": "Test - AuGenda",
+  "topInsights": [
+    {
+      "category": "Longest Test Runs",
+      "impact": "65% of duration",
+      "text": "1 longest test run with outlier durations exceeding 1.29s (three standard deviations)"
+    }
+  ],
+  "totalTestCount": 129
+}

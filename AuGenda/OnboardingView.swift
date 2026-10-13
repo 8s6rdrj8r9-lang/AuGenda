@@ -16,6 +16,8 @@ import SwiftUI
 
 struct OnboardingView: View {
     @Binding var isPresented: Bool
+    var onFinished: () -> Void = {}
+    var onSkipped: () -> Void = {}
 
     @State private var page: Int = 0
 
@@ -26,14 +28,17 @@ struct OnboardingView: View {
             HStack {
                 Spacer()
                 Button {
+                    onSkipped()
                     isPresented = false
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 22))
                         .foregroundColor(Color.appTextSecondary)
+                        .frame(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Skip onboarding")
+                .accessibilityHint("Closes the introduction")
             }
             .padding(.horizontal, Tokens.Spacing.lg)
             .padding(.top, Tokens.Spacing.base)
@@ -67,6 +72,7 @@ struct OnboardingView: View {
                     .buttonStyle(.borderedProminent)
                 } else {
                     Button("Get started") {
+                        onFinished()
                         isPresented = false
                     }
                     .buttonStyle(.borderedProminent)
@@ -88,7 +94,7 @@ struct OnboardingView: View {
             title: "Welcome to AuGenda",
             paragraphs: [
                 "An agenda app designed for ND brains — calm, glanceable, no demands.",
-                "Your data syncs only via your own iCloud private database. AuGenda the company has no backend and can't see your tasks. Erase anytime from Settings → Privacy."
+                "Your data stays on this device. AuGenda the company has no backend and can't see your tasks. Erase anytime from Settings → Privacy."
             ]
         )
     }

@@ -740,7 +740,6 @@ struct ProfileSetupView: View {
         if let mode = pendingMode {
             prefs.currentEnergyLevel = mode.representativeEnergyLevel
         }
-        pendingDensityRaw = ""
 
         profile.preferences = prefs
         modelContext.insert(profile)
@@ -748,9 +747,12 @@ struct ProfileSetupView: View {
         do {
             try modelContext.save()
         } catch {
+            modelContext.rollback()
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            return
         }
 
+        pendingDensityRaw = ""
         profileManager.switchTo(profile)
         isPresented = false
     }
@@ -882,13 +884,13 @@ struct ProfileSettingsView: View {
                                 .font(.caption).fontWeight(.medium)
                                 .padding(.horizontal, 10).padding(.vertical, 6)
                                 .background(Color.appAccent.opacity(0.12), in: Capsule())
-                                .foregroundStyle(Color.appAccent)
+                                .foregroundStyle(.primary)
                         }
                     }
                     .padding(.vertical, 4)
                 }
                 Button("Edit neurotypes") { showNeurotypeEditor = true }
-                    .foregroundStyle(Color.appAccent)
+                    .foregroundStyle(.primary)
             } header: { Text("Neurotypes") }
 
             // Font
@@ -1061,20 +1063,36 @@ struct ProfileSettingsView: View {
 
             // Display
             Section {
-                Picker("UI Size", selection: $prefs.uiScale) {
-                    Text("Normal").tag(1.0)
-                    Text("Large").tag(1.25)
-                    Text("Extra Large").tag(1.5)
-                }
-                .onChange(of: prefs.uiScale) { _, _ in save() }
+                Toggle("Larger controls", isOn: $prefs.largeTouchTargets)
+                    .tint(Color.appAccent)
+                    .onChange(of: prefs.largeTouchTargets) { _, _ in save() }
 
-                Toggle("Minimal mode",        isOn: $prefs.minimalMode)         .tint(Color.appAccent).onChange(of: prefs.minimalMode)         { _, _ in save() }
-                Toggle("Larger touch targets", isOn: $prefs.largeTouchTargets)   .tint(Color.appAccent).onChange(of: prefs.largeTouchTargets)   { _, _ in save() }
-                Toggle("Sensory context tags", isOn: $prefs.sensoryContextTagsEnabled).tint(Color.appAccent).onChange(of: prefs.sensoryContextTagsEnabled) { _, _ in save() }
-                Toggle("High contrast",        isOn: $prefs.highContrastMode)    .tint(Color.appAccent).onChange(of: prefs.highContrastMode)    { _, _ in save() }
-                Toggle("Low stimulation mode", isOn: $prefs.lowStimulationMode) .tint(Color.appAccent).onChange(of: prefs.lowStimulationMode) { _, _ in save() }
-                Toggle("Reduce motion",        isOn: $prefs.reduceMotion)        .tint(Color.appAccent).onChange(of: prefs.reduceMotion)        { _, _ in save() }
-            } header: { Text("Display") }
+                Toggle("Increase contrast", isOn: $prefs.highContrastMode)
+                    .tint(Color.appAccent)
+                    .onChange(of: prefs.highContrastMode) { _, _ in save() }
+
+                Toggle("Low stimulation mode", isOn: $prefs.lowStimulationMode)
+                    .tint(Color.appAccent)
+                    .onChange(of: prefs.lowStimulationMode) { _, _ in save() }
+
+                Toggle(
+                    "Sensory context suggestions",
+                    isOn: $prefs.sensoryContextTagsEnabled
+                )
+                .tint(Color.appAccent)
+                .onChange(of: prefs.sensoryContextTagsEnabled) { _, _ in save() }
+
+                Toggle("Reduce motion", isOn: $prefs.reduceMotion)
+                    .tint(Color.appAccent)
+                    .onChange(of: prefs.reduceMotion) { _, _ in save() }
+                Text("Text size follows Dynamic Type. Profile display options combine with device accessibility settings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Display")
+            } footer: {
+                Text("Low stimulation reduces animation, shadows, and information density. Sensory context suggestions add quick tags when editing tasks.")
+            }
 
             // Reset
             if !prefs.appliedPresetRaw.isEmpty {
@@ -1134,6 +1152,7 @@ struct ProfileSettingsView: View {
         do {
             try modelContext.save()
         } catch {
+            modelContext.rollback()
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
         }
     }
@@ -1210,7 +1229,9 @@ private struct NeurotypeEditorSheet: View {
                         do {
                             try modelContext.save()
                         } catch {
+                            modelContext.rollback()
                             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+                            return
                         }
                         onSave()
                         isPresented = false

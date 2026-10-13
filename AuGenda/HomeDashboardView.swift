@@ -39,6 +39,9 @@ import SwiftData
 
 struct HomeDashboardView: View {
 
+    private static let maximumActiveRecords = 1_000
+    private static let maximumFetchedRelationships = 20_000
+
     // MARK: Dependencies
 
     @Environment(\.modelContext) private var modelContext
@@ -46,6 +49,7 @@ struct HomeDashboardView: View {
     @EnvironmentObject private var profileManager: ActiveProfileManager
     @EnvironmentObject private var notificationManager: NotificationManager
     @EnvironmentObject private var blockManager: BlockManager
+    @Binding private var resumeRouteID: UUID?
 
     // MARK: Data
 
@@ -56,6 +60,8 @@ struct HomeDashboardView: View {
     @Query(filter: #Predicate<AgendaTask> { !$0.isComplete && !$0.isAbandoned },
            sort: \AgendaTask.sortOrder)
     private var allTasks: [AgendaTask]
+
+    @Query private var blockingRelationships: [TaskRelationship]
 
     @Query(sort: \Block.sortOrder)
     private var allBlocks: [Block]
@@ -76,6 +82,8 @@ struct HomeDashboardView: View {
     /// Density-advisor cooldown timestamp. View is reactive on this so
     /// the nudge disappears immediately when the user taps "Not now."
     @AppStorage("density.advisor.dismissedUntilTS") private var advisorDismissedUntilTS: Double = 0
+    @AppStorage("onboarding.completed") private var onboardingCompleted: Bool = false
+    @AppStorage("onboarding.deferredForCapacity") private var onboardingDeferredForCapacity: Bool = false
 
     @State private var selectedItem: AgendaItem?
     @State private var selectedTask: AgendaTask?
@@ -95,7 +103,43 @@ struct HomeDashboardView: View {
 
     // MARK: - Init
 
-    init() {
+    init(resumeRouteID: Binding<UUID?> = .constant(nil)) {
+        _resumeRouteID = resumeRouteID
+        var itemDescriptor = FetchDescriptor<AgendaItem>(
+            predicate: #Predicate { !$0.isComplete },
+            sortBy: [SortDescriptor(\.scheduledDate)]
+        )
+        itemDescriptor.fetchLimit = Self.maximumActiveRecords
+        _allItems = Query(itemDescriptor)
+
+        var taskDescriptor = FetchDescriptor<AgendaTask>(
+            predicate: #Predicate { !$0.isComplete && !$0.isAbandoned },
+            sortBy: [SortDescriptor(\.sortOrder)]
+        )
+        taskDescriptor.fetchLimit = Self.maximumActiveRecords
+        _allTasks = Query(taskDescriptor)
+
+        var relationshipDescriptor = FetchDescriptor<TaskRelationship>(
+            predicate: #Predicate {
+                $0.typeRaw == "blocks" || $0.typeRaw == "follows"
+            }
+        )
+        relationshipDescriptor.fetchLimit = Self.maximumFetchedRelationships
+        _blockingRelationships = Query(relationshipDescriptor)
+
+        var blockDescriptor = FetchDescriptor<Block>(
+            sortBy: [SortDescriptor(\.sortOrder)]
+        )
+        blockDescriptor.fetchLimit = 250
+        _allBlocks = Query(blockDescriptor)
+
+        var inboxDescriptor = FetchDescriptor<InboxItem>(
+            predicate: #Predicate { $0.stateRaw == "unprocessed" },
+            sortBy: [SortDescriptor(\.createdAt)]
+        )
+        inboxDescriptor.fetchLimit = 200
+        _unprocessedInboxItems = Query(inboxDescriptor)
+
         // Bound the completed-items fetch: newest-completed first, capped at 20.
         // The "done today" strip only ever surfaces ≤5 from today, so a small
         // ceiling is plenty and keeps months of history out of memory.
@@ -143,79 +187,6 @@ struct HomeDashboardView: View {
         }
     }
 
-    /// Today's not-yet-complete items, filtered by snooze + due-today.
-    /// Also applies the difficulty-rank ceiling from the current density mode:
-    /// survival sees ≤4, low ≤6, functional ≤8, high ≤10. `specialInterest`
-    /// items bypass the cap (hyperfocus override).
-    private var todayItems: [AgendaItem] {
-        let now = Date.now
-        let endOfDay = Calendar.current.endOfDay(for: now)
-        let mode = density
-        return profileItems.filter { item in
-            if let snooze = item.snoozedUntil, snooze > now { return false }
-            guard item.scheduledDate <= endOfDay else { return false }
-            return item.passes(densityFilter: mode)
-        }
-    }
-
-    /// Top-ranked actionable tasks for the For-Now section. The old hand-rolled
-    /// gate (friction ≤ energy AND energy ≤ energy) is now subsumed by the
-    /// six-axis difficulty rank — friction + energy contribute to the rank
-    /// alongside sensory/social/initiation load, and the density mode caps
-    /// the rank ceiling. See DifficultyEngine.swift.
-    private var forNowTasks: [AgendaTask] {
-        let mode = density
-        return profileTasks
-            .filter { $0.isActionable && $0.passes(densityFilter: mode) }
-            .sorted { $0.ndPriorityScore > $1.ndPriorityScore }
-    }
-
-    /// Today's blocks (sorted by sortOrder).
-    private var todayBlocks: [Block] {
-        allBlocks.filter { !$0.isComplete }
-    }
-
-    /// Tomorrow's scheduled items — used in high-capacity preview.
-    private var tomorrowItems: [AgendaItem] {
-        let cal = Calendar.current
-        guard let tomorrowStart = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: .now)) else { return [] }
-        let tomorrowEnd = cal.endOfDay(for: tomorrowStart)
-        return profileItems.filter { $0.scheduledDate >= tomorrowStart && $0.scheduledDate <= tomorrowEnd }
-    }
-
-    /// Items completed today — momentum reinforcement strip (high capacity only).
-    private var completedToday: [AgendaItem] {
-        let cal = Calendar.current
-        let pid = activeProfile?.clientID
-        return completedItems
-            .filter { item in
-                guard let done = item.completedAt, cal.isDateInToday(done) else { return false }
-                if let assigned = item.assignedToProfileID { return assigned == pid }
-                return true
-            }
-            .prefix(5)
-            .map { $0 }
-    }
-
-    /// Backlog spotlight — top 3 by ndPriorityScore, excluding anything already
-    /// in the For-Now section and the primary card.
-    private var backlogSpotlight: [AgendaTask] {
-        let forNowIDs = Set(forNowTasks.map(\.clientID))
-        let primaryID: UUID? = {
-            if case .topTask(let t) = primaryContent { return t.clientID }
-            return nil
-        }()
-        return profileTasks
-            .filter { task in
-                task.isActionable
-                && !forNowIDs.contains(task.clientID)
-                && task.clientID != primaryID
-            }
-            .sorted { $0.ndPriorityScore > $1.ndPriorityScore }
-            .prefix(3)
-            .map { $0 }
-    }
-
     private var shouldShowRecovery: Bool {
         !recoveryDismissed && InterruptionContext.shouldShowRecovery
     }
@@ -251,6 +222,36 @@ struct HomeDashboardView: View {
     // MARK: - Body
 
     var body: some View {
+        let projection = HomeDashboardProjection.make(
+            items: allItems,
+            tasks: allTasks,
+            relationships: blockingRelationships,
+            blocks: allBlocks,
+            completedItems: completedItems,
+            activeProfileID: activeProfile?.clientID,
+            density: density
+        )
+        let primary = primaryContent(using: projection)
+        let primaryItemID: UUID? = {
+            if case .scheduledItem(let item) = primary { return item.clientID }
+            return nil
+        }()
+        let primaryTaskID: UUID? = {
+            if case .topTask(let task) = primary { return task.clientID }
+            return nil
+        }()
+        let todayItemsExcludingPrimary = projection.todayItems.filter {
+            $0.clientID != primaryItemID
+        }
+        let forNowTasksExcludingPrimary = projection.forNowTasks.filter {
+            $0.clientID != primaryTaskID
+        }
+        let backlogSpotlight = Array(
+            projection.otherActionableTasks.lazy
+                .filter { $0.clientID != primaryTaskID }
+                .prefix(3)
+        )
+
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: zoneSpacing) {
@@ -297,13 +298,13 @@ struct HomeDashboardView: View {
                     }
 
                     PrimaryActionZone(
-                        content: primaryContent,
+                        content: primary,
                         onOpenItem: { selectedItem = $0 },
                         onOpenTask: { selectedTask = $0 },
                         onDeferItem: deferToTomorrow(item:),
                         onDeferTask: deferToTomorrow(task:),
                         onAddTask: { showAddAgendaItem = true },
-                        onResumeRecovery: dismissRecovery,
+                        onResumeRecovery: resumeRecovery,
                         onReorientRecovery: { dismissRecovery(); showEnergyCheck = true },
                         onFreshRecovery: dismissRecovery
                     )
@@ -314,10 +315,10 @@ struct HomeDashboardView: View {
                             density: density,
                             todayItems: todayItemsExcludingPrimary,
                             forNowTasks: forNowTasksExcludingPrimary,
-                            activeBlocks: todayBlocks,
+                            activeBlocks: projection.activeBlocks,
                             backlogSpotlight: backlogSpotlight,
-                            tomorrowItems: tomorrowItems,
-                            completedToday: completedToday,
+                            tomorrowItems: projection.tomorrowItems,
+                            completedToday: projection.completedToday,
                             onTapItem: { selectedItem = $0 },
                             onTapTask: { selectedTask = $0 },
                             onTapBlock: { selectedBlock = $0 }
@@ -435,7 +436,7 @@ struct HomeDashboardView: View {
                     #endif
             }
             .sheet(isPresented: $showInbox) {
-                InboxView()
+                InboxView(profileID: activeProfile?.clientID)
                     #if os(iOS)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
@@ -452,9 +453,16 @@ struct HomeDashboardView: View {
         .onAppear {
             migrateLegacyDensityPinIfNeeded()
             InterruptionContext.recordActivity(contextLabel: "home dashboard")
-            if !morningSetupCompletedToday {
-                showMorningSetup = true
-            }
+            let isResumingEntity = resumeRouteID != nil
+            openResumeRouteIfNeeded()
+            guard !isResumingEntity,
+                  activeProfile != nil,
+                  (onboardingCompleted || onboardingDeferredForCapacity),
+                  !morningSetupCompletedToday else { return }
+            showMorningSetup = true
+        }
+        .onChange(of: resumeRouteID) { _, _ in
+            openResumeRouteIfNeeded()
         }
     }
 
@@ -465,11 +473,17 @@ struct HomeDashboardView: View {
     //   (3) Recovery prompt → (4) Next-scheduled item within 2hr →
     //   (5) Top ndPriorityScore task → (6) Empty.
 
-    private var primaryContent: PrimaryContent {
+    private func primaryContent(
+        using projection: HomeDashboardProjection
+    ) -> PrimaryContent {
         // (1) Active focus session
-        if notificationManager.focusSessionActive,
-           let endsAt = notificationManager.focusSessionEndsAt {
-            return .focusSession(endsAt: endsAt)
+        if notificationManager.focusSessionActive {
+            if notificationManager.focusSessionPaused {
+                return .pausedFocusSession
+            }
+            if let endsAt = notificationManager.focusSessionEndsAt {
+                return .focusSession(endsAt: endsAt)
+            }
         }
 
         // (2) Active block (BlockManager has its own currentBlock)
@@ -488,28 +502,21 @@ struct HomeDashboardView: View {
 
         // (4) Next scheduled item within 2hr
         let twoHrs = Date.now.addingTimeInterval(2 * 60 * 60)
-        if let next = todayItems.first(where: { $0.scheduledDate <= twoHrs && $0.scheduledDate >= Date.now.addingTimeInterval(-15 * 60) }) {
+        if let next = projection.todayItems.first(where: {
+            $0.scheduledDate <= twoHrs
+                && $0.scheduledDate >= Date.now.addingTimeInterval(-15 * 60)
+        }) {
             return .scheduledItem(next)
         }
 
         // (5) Top ndPriorityScore task
-        if let top = forNowTasks.first ?? profileTasks.sorted(by: { $0.ndPriorityScore > $1.ndPriorityScore }).first {
+        if let top = projection.forNowTasks.first
+            ?? projection.otherActionableTasks.first {
             return .topTask(top)
         }
 
         // (6) Empty
         return .empty
-    }
-
-    /// Today's items minus whichever one (if any) is in the primary zone — avoids duplication.
-    private var todayItemsExcludingPrimary: [AgendaItem] {
-        guard case .scheduledItem(let item) = primaryContent else { return todayItems }
-        return todayItems.filter { $0.clientID != item.clientID }
-    }
-
-    private var forNowTasksExcludingPrimary: [AgendaTask] {
-        guard case .topTask(let task) = primaryContent else { return forNowTasks }
-        return forNowTasks.filter { $0.clientID != task.clientID }
     }
 
     // MARK: - Spacing token (varies by density)
@@ -532,6 +539,37 @@ struct HomeDashboardView: View {
         }
     }
 
+    /// Resume the exact profile-scoped entity recorded before the interruption.
+    /// If it was deleted or belongs to another profile, do not fall through to
+    /// an unrelated row with the same presentation.
+    private func resumeRecovery() {
+        let itemID = InterruptionContext.lastItemID
+        if let itemID, let item = profileItems.first(where: { $0.clientID == itemID }) {
+            selectedItem = item
+        } else if let itemID, let task = profileTasks.first(where: { $0.clientID == itemID }) {
+            selectedTask = task
+        } else {
+            ErrorBannerController.shared.show("That task is no longer available.")
+        }
+        dismissRecovery()
+    }
+
+    /// Resolves the root resume banner's stored UUID against the active
+    /// profile only, then opens the same detail sheet as a direct tap.
+    private func openResumeRouteIfNeeded() {
+        guard let itemID = resumeRouteID else { return }
+        defer { resumeRouteID = nil }
+        showMorningSetup = false
+
+        if let item = profileItems.first(where: { $0.clientID == itemID }) {
+            selectedItem = item
+        } else if let task = profileTasks.first(where: { $0.clientID == itemID }) {
+            selectedTask = task
+        } else {
+            ErrorBannerController.shared.show("That task is no longer available.")
+        }
+    }
+
     private func pinDensity(_ mode: DensityMode) {
         guard let prefs = activePrefs else { return }
         withAnimation(Tokens.Animation.standardEase(reduce: reduceMotion)) {
@@ -539,6 +577,7 @@ struct HomeDashboardView: View {
             do {
                 try modelContext.save()
             } catch {
+                modelContext.rollback()
                 ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
             }
         }
@@ -555,6 +594,7 @@ struct HomeDashboardView: View {
             do {
                 try modelContext.save()
             } catch {
+                modelContext.rollback()
                 ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
             }
         }
@@ -567,6 +607,7 @@ struct HomeDashboardView: View {
             do {
                 try modelContext.save()
             } catch {
+                modelContext.rollback()
                 ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
             }
         }
@@ -588,15 +629,17 @@ struct HomeDashboardView: View {
         let cal = Calendar.current
         let tomorrowStart = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: .now)) ?? Date.now.addingTimeInterval(12 * 60 * 60)
         let minutes = max(1, Int(tomorrowStart.timeIntervalSinceNow / 60))
-        ActivityLog.recordSnooze()
-        notificationManager.snooze(item: item, minutes: minutes)
         item.snoozedUntil = tomorrowStart
         item.updatedAt = .now
         do {
             try modelContext.save()
         } catch {
+            modelContext.rollback()
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            return
         }
+        ActivityLog.recordSnooze()
+        notificationManager.snooze(item: item, minutes: minutes)
     }
 
     /// Defer a backlog task until tomorrow via `isDeferredUntil` (no
@@ -604,14 +647,16 @@ struct HomeDashboardView: View {
     private func deferToTomorrow(task: AgendaTask) {
         let cal = Calendar.current
         let tomorrowStart = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: .now)) ?? Date.now.addingTimeInterval(12 * 60 * 60)
-        ActivityLog.recordSnooze()
         task.isDeferredUntil = tomorrowStart
         task.updatedAt = .now
         do {
             try modelContext.save()
         } catch {
+            modelContext.rollback()
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            return
         }
+        ActivityLog.recordSnooze()
     }
 
     /// One-time migration from the legacy device-local @AppStorage key to
@@ -627,20 +672,29 @@ struct HomeDashboardView: View {
 
         // Only adopt the legacy value if the active profile has no pin set yet —
         // a fresh per-profile decision always wins over the device-global one.
-        if let prefs = activePrefs, prefs.densityPinnedRaw.isEmpty,
-           DensityMode(rawValue: legacy) != nil {
+        guard DensityMode(rawValue: legacy) != nil else {
+            defaults.removeObject(forKey: Self.legacyPinKey)
+            return
+        }
+
+        // Wait until a profile exists instead of discarding the only copy on
+        // the first launch before profile creation finishes.
+        guard let prefs = activePrefs else { return }
+
+        if prefs.densityPinnedRaw.isEmpty {
             prefs.densityPinnedRaw = legacy
             prefs.updatedAt = .now
             do {
                 try modelContext.save()
             } catch {
+                modelContext.rollback()
                 ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+                return
             }
         }
 
-        // Clear regardless — we only migrate once. If there's no active
-        // profile yet (very first launch), the legacy value is dropped;
-        // that's acceptable for a beta surface.
+        // Clear only after the profile already has a newer choice or the
+        // legacy choice has been durably committed.
         defaults.removeObject(forKey: Self.legacyPinKey)
     }
 }
@@ -651,6 +705,7 @@ struct HomeDashboardView: View {
 /// What the Primary Action Zone renders. Order matches Session 1 priority list.
 enum PrimaryContent {
     case focusSession(endsAt: Date)
+    case pausedFocusSession
     case activeBlock(Block)
     case recovery(lastItem: String?, gap: String, contextLabel: String?)
     case scheduledItem(AgendaItem)
@@ -705,7 +760,7 @@ private struct OrientationAnchor: View {
                         // separated by `sm` spacing rather than abutting.
                         if energyStale {
                             Image(systemName: "clock.fill")
-                                .font(.system(size: 9, weight: .regular))
+                                .font(.caption2)
                                 .foregroundColor(Tokens.Color.warning)
                                 .accessibilityLabel("Energy reading is stale")
                         }
@@ -723,7 +778,7 @@ private struct OrientationAnchor: View {
                             .fontWeight(.semibold)
                         if isPinned {
                             Image(systemName: "pin.fill")
-                                .font(.system(size: 9))
+                                .font(.caption2)
                         }
                     }
                     .padding(.horizontal, Tokens.Spacing.sm)
@@ -822,7 +877,7 @@ private struct DensityAdvisoryRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: Tokens.Spacing.md) {
             Image(systemName: "lightbulb.fill")
-                .font(.system(size: 14))
+                .font(.subheadline)
                 .foregroundColor(Tokens.Color.warning)
                 .padding(.top, 2)
                 .accessibilityHidden(true)
@@ -875,6 +930,9 @@ private struct PrimaryActionZone: View {
         switch content {
         case .focusSession(let endsAt):
             FocusSessionPrimaryCard(endsAt: endsAt)
+
+        case .pausedFocusSession:
+            PausedFocusSessionPrimaryCard()
 
         case .activeBlock(let block):
             ActiveBlockPrimaryCard(block: block)
@@ -947,6 +1005,33 @@ private struct FocusSessionPrimaryCard: View {
     }
 }
 
+private struct PausedFocusSessionPrimaryCard: View {
+    @EnvironmentObject private var notificationManager: NotificationManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.md) {
+            Label("Focus session paused", systemImage: "pause.circle.fill")
+                .font(Tokens.Typography.label)
+                .foregroundColor(Tokens.Color.info)
+
+            Text("Paused time is excluded from the session duration.")
+                .font(Tokens.Typography.caption)
+                .foregroundColor(Color.appTextSecondary)
+
+            Button {
+                notificationManager.resumeFocusSession()
+            } label: {
+                Label("Resume focus", systemImage: "play.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(Tokens.Spacing.base)
+        .background(Color.appBackgroundSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Border.radiusMedium))
+    }
+}
+
 private struct ActiveBlockPrimaryCard: View {
     let block: Block
 
@@ -992,7 +1077,7 @@ private struct EmptyPrimaryCard: View {
             Button(action: onAddTask) {
                 HStack(spacing: Tokens.Spacing.sm) {
                     Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                     Text("Add something for today")
                         .font(Tokens.Typography.label)
                         .fontWeight(.semibold)
@@ -1137,7 +1222,7 @@ private struct CompletedTrailRow: View {
     var body: some View {
         HStack(spacing: Tokens.Spacing.sm) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 14))
+                .font(.subheadline)
                 .foregroundColor(Tokens.Color.success.opacity(0.75))
             Text(item.title)
                 .font(Tokens.Typography.body)
@@ -1198,7 +1283,7 @@ private struct BlockSummaryCard: View {
         Button(action: onTap) {
             HStack(spacing: Tokens.Spacing.md) {
                 Image(systemName: block.icon)
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.title3.weight(.semibold))
                     .foregroundColor(block.isActive ? Color.appAccent : Color.appAccent.opacity(isDimmed ? 0.5 : 1))
                     .frame(width: 28)
 
@@ -1347,7 +1432,7 @@ private struct AgendaItemDetailSheet: View {
                         dismiss()
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 22))
+                            .font(.title2)
                             .foregroundColor(Color.appTextSecondary)
                     }
                     .buttonStyle(.plain)
@@ -1467,7 +1552,7 @@ private struct AgendaItemDetailSheet: View {
                     } label: {
                         HStack(spacing: Tokens.Spacing.xs) {
                             Image(systemName: "pencil")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.caption.weight(.semibold))
                             Text("Edit details")
                                 .font(Tokens.Typography.caption)
                                 .fontWeight(.semibold)
@@ -1520,7 +1605,7 @@ private struct AgendaItemDetailSheet: View {
         Button(action: action) {
             HStack(spacing: Tokens.Spacing.sm) {
                 Image(systemName: icon)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .frame(width: 16, alignment: .center)   // equal slot — labels align across buttons
                 Text(title)
                     .font(Tokens.Typography.label)
@@ -1538,35 +1623,45 @@ private struct AgendaItemDetailSheet: View {
     // MARK: - Actions
 
     private func startFocusSession() {
-        notificationManager.startFocusSession(durationMinutes: sessionMinutes, taskTitle: item.title)
+        guard notificationManager.startFocusSession(
+            durationMinutes: sessionMinutes,
+            taskTitle: item.title,
+            taskID: item.clientID
+        ) else { return }
         InterruptionContext.recordActivity(itemID: item.clientID, contextLabel: "focus session")
         dismiss()
     }
 
     private func completeItem() {
-        ActivityLog.recordCompletion()
-        item.isComplete = true
-        item.completedAt = .now
-        item.updatedAt = .now
-        notificationManager.cancelNotifications(for: item)
         do {
-            try modelContext.save()
+            let next = try AgendaItemLifecycleService.complete(
+                item,
+                in: modelContext
+            )
+            if let next {
+                notificationManager.scheduleNotifications(for: next)
+            }
         } catch {
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            return
         }
+        ActivityLog.recordCompletion()
+        notificationManager.cancelNotifications(for: item)
         dismiss()
     }
 
     private func snooze(minutes: Int) {
-        ActivityLog.recordSnooze()
-        notificationManager.snooze(item: item, minutes: minutes)
         item.snoozedUntil = Date.now.addingTimeInterval(Double(minutes) * 60)
         item.updatedAt = .now
         do {
             try modelContext.save()
         } catch {
+            modelContext.rollback()
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            return
         }
+        ActivityLog.recordSnooze()
+        notificationManager.snooze(item: item, minutes: minutes)
         dismiss()
     }
 }

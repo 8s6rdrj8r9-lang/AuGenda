@@ -30,16 +30,22 @@ struct FocusSessionView: View {
     @State private var selectedTask: AgendaTask? = nil
     @State private var showTaskPicker = false
     @State private var showInterruptionPicker = false
+    @State private var showStopDialog = false
     @State private var showHistory = false
     @State private var inBreak = false
     @State private var breakEndsAt: Date? = nil
+    @State private var skipBreakAfterAbandon = false
 
     private var sessionMinutes: Int { profileManager.activePreferences?.focusSessionMinutes ?? 25 }
     private var breakMinutes: Int { profileManager.activePreferences?.breakMinutes ?? 10 }
 
     private var suggestedMinutes: Int? {
         let energy = profileManager.activePreferences?.currentEnergyLevel ?? 3
-        return CognitiveProfile.suggestedFocusLength(in: modelContext, energyLevel: energy)
+        return CognitiveProfile.suggestedFocusLength(
+            in: modelContext,
+            energyLevel: energy,
+            profileID: profileManager.activeProfile?.clientID
+        )
     }
 
     var body: some View {
@@ -47,10 +53,16 @@ struct FocusSessionView: View {
             VStack(spacing: 0) {
                 Spacer()
 
-                if notificationManager.focusSessionActive,
-                   let endsAt = notificationManager.focusSessionEndsAt {
-                    // ── Active session ──
-                    activeSessionContent(endsAt: endsAt)
+                if notificationManager.focusSessionActive {
+                    if notificationManager.focusSessionPaused {
+                        // ── Paused session ──
+                        pausedSessionContent()
+                    } else if let endsAt = notificationManager.focusSessionEndsAt {
+                        // ── Active session ──
+                        activeSessionContent(endsAt: endsAt)
+                    } else {
+                        ProgressView("Restoring focus session…")
+                    }
 
                 } else if inBreak, let breakEnd = breakEndsAt, breakEnd > .now {
                     // ── Break phase ──
@@ -85,16 +97,33 @@ struct FocusSessionView: View {
                 #endif
             }
             .sheet(isPresented: $showHistory) {
-                FocusSessionHistoryView()
+                FocusSessionHistoryView(profileID: profileManager.activeProfile?.clientID)
                 #if os(iOS)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
                 #endif
             }
+            .confirmationDialog(
+                "Stop this focus session?",
+                isPresented: $showStopDialog,
+                titleVisibility: .visible
+            ) {
+                Button("Abandon — interrupted", role: .destructive) {
+                    abandonSession(reason: "Interrupted before completion")
+                }
+                Button("Abandon — changed priorities", role: .destructive) {
+                    abandonSession(reason: "Changed priorities")
+                }
+                Button("Keep session", role: .cancel) {}
+            } message: {
+                Text("Abandoning preserves the session in history without counting it as completed.")
+            }
         }
         // When a session ends naturally (focusSessionActive flips to false), start the break
         .onChange(of: notificationManager.focusSessionActive) { wasActive, isActive in
-            if wasActive && !isActive && !inBreak {
+            if wasActive && !isActive && skipBreakAfterAbandon {
+                skipBreakAfterAbandon = false
+            } else if wasActive && !isActive && !inBreak {
                 startBreak()
             }
         }
@@ -119,18 +148,23 @@ struct FocusSessionView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Button {
-                notificationManager.endFocusSession()
-                notificationManager.cancelHyperfocusWarning()
-                // Break starts via .onChange above
-            } label: {
-                Text("End early")
-                    .font(.subheadline)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
+            HStack(spacing: 12) {
+                Button {
+                    notificationManager.pauseFocusSession()
+                } label: {
+                    Label("Pause", systemImage: "pause.fill")
+                }
+                .buttonStyle(.bordered)
+
+                Button {
+                    notificationManager.endFocusSession()
+                    notificationManager.cancelHyperfocusWarning()
+                    // Break starts via .onChange above.
+                } label: {
+                    Label("Finish now", systemImage: "checkmark")
+                }
+                .buttonStyle(.borderedProminent)
             }
-            .buttonStyle(.bordered)
-            .tint(.red)
 
             Button {
                 showInterruptionPicker = true
@@ -140,6 +174,52 @@ struct FocusSessionView: View {
             }
             .buttonStyle(.bordered)
             .tint(.orange)
+
+            Button("Abandon session", role: .destructive) {
+                showStopDialog = true
+            }
+            .font(.caption)
+        }
+    }
+
+    @ViewBuilder
+    private func pausedSessionContent() -> some View {
+        VStack(spacing: 24) {
+            Image(systemName: "pause.circle.fill")
+                .font(.system(size: 72))
+                .foregroundStyle(Color.appAccent)
+                .accessibilityHidden(true)
+
+            Text("Focus session paused")
+                .font(.title2)
+                .fontWeight(.semibold)
+
+            Text("Paused time is excluded from the session duration.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            Button {
+                notificationManager.resumeFocusSession()
+            } label: {
+                Label("Resume focus", systemImage: "play.fill")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(16)
+            }
+            .buttonStyle(.borderedProminent)
+
+            HStack {
+                Button("Finish now") {
+                    notificationManager.endFocusSession()
+                }
+                .buttonStyle(.bordered)
+
+                Button("Abandon", role: .destructive) {
+                    showStopDialog = true
+                }
+                .buttonStyle(.bordered)
+            }
         }
     }
 
@@ -262,7 +342,8 @@ struct FocusSessionView: View {
     private func startSession() {
         notificationManager.startFocusSession(
             durationMinutes: sessionMinutes,
-            taskTitle: selectedTask?.title ?? ""
+            taskTitle: selectedTask?.title ?? "",
+            taskID: selectedTask?.clientID
         )
         if let task = selectedTask, task.hyperfocusRisk {
             notificationManager.scheduleHyperfocusWarning(taskTitle: task.title, afterMinutes: 45)
@@ -273,6 +354,13 @@ struct FocusSessionView: View {
         inBreak = true
         breakEndsAt = Date.now.addingTimeInterval(Double(breakMinutes) * 60)
     }
+
+    private func abandonSession(reason: String) {
+        skipBreakAfterAbandon = true
+        if !notificationManager.abandonFocusSession(reason: reason) {
+            skipBreakAfterAbandon = false
+        }
+    }
 }
 
 
@@ -281,6 +369,8 @@ struct FocusSessionView: View {
 struct ActiveFocusRing: View {
     let endsAt: Date
     let totalMinutes: Int
+    @ScaledMetric(relativeTo: .largeTitle) private var ringSize: CGFloat = 220
+    @ScaledMetric(relativeTo: .largeTitle) private var ringLineWidth: CGFloat = 14
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -292,14 +382,14 @@ struct ActiveFocusRing: View {
             ZStack {
                 // Track
                 Circle()
-                    .stroke(Color.appAccent.opacity(0.12), lineWidth: 14)
+                    .stroke(Color.appAccent.opacity(0.12), lineWidth: ringLineWidth)
 
                 // Progress arc
                 Circle()
                     .trim(from: 0, to: progress)
                     .stroke(
                         isUrgent ? Color.orange : Color.appAccent,
-                        style: StrokeStyle(lineWidth: 14, lineCap: .round)
+                        style: StrokeStyle(lineWidth: ringLineWidth, lineCap: .round)
                     )
                     .rotationEffect(.degrees(-90))
                     .animation(.linear(duration: 1), value: progress)
@@ -307,7 +397,7 @@ struct ActiveFocusRing: View {
                 // Time display
                 VStack(spacing: 4) {
                     Text(formatTime(remaining))
-                        .font(.system(size: 46, weight: .bold, design: .rounded))
+                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
                         .monospacedDigit()
                         .foregroundStyle(isUrgent ? .orange : .primary)
 
@@ -316,7 +406,7 @@ struct ActiveFocusRing: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .frame(width: 220, height: 220)
+            .frame(width: ringSize, height: ringSize)
         }
     }
 
@@ -333,6 +423,8 @@ struct ActiveFocusRing: View {
 struct BreakRing: View {
     let endsAt: Date
     let totalMinutes: Int
+    @ScaledMetric(relativeTo: .largeTitle) private var ringSize: CGFloat = 200
+    @ScaledMetric(relativeTo: .largeTitle) private var ringLineWidth: CGFloat = 14
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -342,17 +434,17 @@ struct BreakRing: View {
 
             ZStack {
                 Circle()
-                    .stroke(Color.green.opacity(0.12), lineWidth: 14)
+                    .stroke(Color.green.opacity(0.12), lineWidth: ringLineWidth)
 
                 Circle()
                     .trim(from: 0, to: progress)
-                    .stroke(Color.green, style: StrokeStyle(lineWidth: 14, lineCap: .round))
+                    .stroke(Color.green, style: StrokeStyle(lineWidth: ringLineWidth, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .animation(.linear(duration: 1), value: progress)
 
                 VStack(spacing: 4) {
                     Text(formatTime(remaining))
-                        .font(.system(size: 40, weight: .bold, design: .rounded))
+                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
                         .monospacedDigit()
                         .foregroundStyle(.green)
 
@@ -361,7 +453,7 @@ struct BreakRing: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .frame(width: 200, height: 200)
+            .frame(width: ringSize, height: ringSize)
         }
     }
 
@@ -379,6 +471,7 @@ struct FocusTaskPickerSheet: View {
 
     @Binding var selectedTask: AgendaTask?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @Query(
         filter: #Predicate<AgendaTask> { !$0.isComplete && !$0.isAbandoned },
         sort: \AgendaTask.sortOrder
@@ -387,7 +480,7 @@ struct FocusTaskPickerSheet: View {
 
     // Sort by ndPriorityScore descending so the best match is at top
     private var sortedTasks: [AgendaTask] {
-        tasks.filter { $0.isActionable }
+        tasks.filter { $0.isActionable(in: modelContext) }
             .sorted { $0.ndPriorityScore > $1.ndPriorityScore }
     }
 

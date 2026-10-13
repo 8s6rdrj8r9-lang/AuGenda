@@ -1,0 +1,12 @@
+{
+  "source": "Immutable accepted snapshot",
+  "execution_copy": "/Users/arthur/Development/AuGenda/local-artifacts/ensdev-audit-2026-10-07/verification/workspace",
+  "transformations": [
+    "Only execution-copy main scheme and test plan: inject existing -ui-testing launch argument and CFFIXED_USER_HOME into test host. Product Swift, resources, build settings, test definitions and fixture bytes unchanged."
+  ],
+  "isolation_probe": {
+    "NSHomeDirectory": "/Users/arthur/Development/AuGenda/local-artifacts/ensdev-audit-2026-10-07/verification/test-home",
+    "applicationSupport": "/Users/arthur/Development/AuGenda/local-artifacts/ensdev-audit-2026-10-07/verification/test-home/Library/Application Support"
+  },
+  "limits": "This verifies test execution under disposable home and in-memory launch; it does not verify production startup by running a real user store."
+}

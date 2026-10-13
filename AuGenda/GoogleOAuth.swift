@@ -4,9 +4,8 @@
 // Google Sign-In configuration for Gemini API access. Wraps the generic
 // OAuthCoordinator with Google's specific endpoints + scope.
 //
-// 🚨 TESTFLIGHT BLOCKER 🚨
-//
-// The clientID below is a PLACEHOLDER. To ship Google Sign-In to users:
+// Google Sign-In is optional. Placeholder builds keep the Sign-In button
+// disabled, while the Gemini API-key path remains available. To enable OAuth:
 //
 //   1. Create a Google Cloud project (or reuse one):
 //      https://console.cloud.google.com/projectcreate
@@ -19,38 +18,35 @@
 //        Application type: iOS
 //        Bundle ID: <your AuGenda bundle id, e.g. ensdev.AuGenda>
 //        (No client secret on iOS clients)
-//   5. Replace `clientID` below with the new client's ID, in the form:
+//   5. Set the `AuGendaGoogleClientID` Info.plist value (normally through
+//      an Xcode build-setting substitution) to the new client's ID:
 //        123456789012-xxxxxxx.apps.googleusercontent.com
-//   6. Register the reversed-DNS URL scheme in Info.plist under
-//      CFBundleURLTypes:
+//   6. Set `AuGendaGoogleRedirectScheme` to the reversed client ID and
+//      register that exact scheme under CFBundleURLTypes:
 //        com.googleusercontent.apps.123456789012-xxxxxxx
 //      The redirect URI is `{REVERSED_CLIENT_ID}:/oauth2redirect`.
-//   7. Update `redirectURI` below to match.
 //
-// Until this is real, the "Sign in with Google" button in Settings will
-// fail with `tokenExchangeFailed` or open Google's OAuth screen showing
-// a "401: invalid_client" error.
+// Until this is real, the "Sign in with Google" button remains disabled.
 
 import Foundation
 
-// ⚠️ SECURITY: Before shipping to TestFlight or App Store, run
-//    Scripts/validate-oauth.sh to confirm the client ID is not a placeholder.
-//    Set AUGENDA_GOOGLE_CLIENT_ID in Xcode Build Settings → User-Defined.
-
 enum GoogleOAuth {
 
-    // Must be set via Xcode build settings (AUGENDA_GOOGLE_CLIENT_ID) before shipping.
-    // Hardcoding a real client ID in source is a security risk; this falls back to a
-    // placeholder so the app compiles out-of-the-box but disables Sign-In until configured.
-    static let clientID = ProcessInfo.processInfo.environment["AUGENDA_GOOGLE_CLIENT_ID"]
-        ?? "YOUR_CLIENT_ID_HERE.apps.googleusercontent.com"
+    private static let clientIDInfoKey = "AuGendaGoogleClientID"
+    private static let redirectSchemeInfoKey = "AuGendaGoogleRedirectScheme"
+
+    // OAuth client IDs and redirect schemes are public application
+    // configuration, not secrets. They are injected into Info.plist so the
+    // same values are available in an archived/TestFlight build; API keys and
+    // OAuth tokens remain in Keychain.
+    static let clientID = infoString(for: clientIDInfoKey)
+    static let redirectScheme = infoString(for: redirectSchemeInfoKey)
 
     /// Reversed-DNS form is what Google requires for iOS OAuth clients.
     /// Must match the URL scheme registered in Info.plist (CFBundleURLTypes).
-    static let redirectURI = {
-        let reversed = clientID.components(separatedBy: ".").reversed().joined(separator: ".")
-        return "\(reversed):/oauth2redirect"
-    }()
+    static let redirectURI = redirectScheme.isEmpty
+        ? ""
+        : "\(redirectScheme):/oauth2redirect"
 
     /// Scope for Gemini / Generative Language API access.
     static let scope = "https://www.googleapis.com/auth/generative-language"
@@ -58,11 +54,48 @@ enum GoogleOAuth {
     static let authEndpoint  = URL(string: "https://accounts.google.com/o/oauth2/v2/auth")!
     static let tokenEndpoint = URL(string: "https://oauth2.googleapis.com/token")!
 
-    /// Quick check — is the OAuth client configured? Used by the
-    /// Settings UI to disable the Sign-In button on placeholder builds.
+    /// Checks the complete runtime configuration. A build is configured only
+    /// when both Info.plist values are valid, the redirect scheme is the
+    /// reversed client ID, and that exact scheme is registered with iOS.
     static var isConfigured: Bool {
-        clientID != "YOUR_CLIENT_ID_HERE.apps.googleusercontent.com"
-        && !clientID.contains("YOUR_CLIENT_ID")
+        validateConfiguration(
+            clientID: clientID,
+            redirectScheme: redirectScheme,
+            registeredSchemes: registeredURLSchemes()
+        )
+    }
+
+    static func validateConfiguration(
+        clientID: String,
+        redirectScheme: String,
+        registeredSchemes: Set<String>
+    ) -> Bool {
+        let normalizedClientID = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedScheme = redirectScheme.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedClientID.isEmpty,
+              !normalizedClientID.contains("$("),
+              !normalizedClientID.localizedCaseInsensitiveContains("YOUR_CLIENT_ID"),
+              normalizedClientID.hasSuffix(".apps.googleusercontent.com"),
+              !normalizedScheme.isEmpty,
+              !normalizedScheme.contains("$("),
+              normalizedScheme.range(
+                of: #"^[A-Za-z][A-Za-z0-9+.-]*$"#,
+                options: .regularExpression
+              ) != nil else {
+            return false
+        }
+
+        let expectedScheme = normalizedClientID
+            .components(separatedBy: ".")
+            .reversed()
+            .joined(separator: ".")
+        guard normalizedScheme.caseInsensitiveCompare(expectedScheme) == .orderedSame else {
+            return false
+        }
+
+        return registeredSchemes.contains {
+            $0.caseInsensitiveCompare(normalizedScheme) == .orderedSame
+        }
     }
 
     /// Static config for the generic coordinator. Google requires
@@ -88,11 +121,45 @@ enum GoogleOAuth {
     /// the Keychain.
     @MainActor
     static func currentAccessToken() async throws -> String {
-        try await OAuthCoordinator.shared.validAccessToken(config: providerConfig)
+        guard isConfigured else { throw OAuthError.configMissing }
+        return try await OAuthCoordinator.shared.validAccessToken(config: providerConfig)
     }
 
     @MainActor
     static var isSignedIn: Bool {
-        OAuthCoordinator.shared.isSignedIn(provider: .gemini)
+        isConfigured && OAuthCoordinator.shared.isSignedIn(provider: .gemini)
+    }
+
+    /// Local credential presence is independent of whether this build's
+    /// Info.plist configuration is valid, so Settings can always offer a way
+    /// to remove a previously stored token.
+    @MainActor
+    static var hasLocalSession: Bool {
+        OAuthCoordinator.shared.hasStoredTokenRecord(provider: .gemini)
+    }
+
+    @MainActor
+    static func authorize() async throws -> OAuthTokens {
+        guard isConfigured else { throw OAuthError.configMissing }
+        return try await OAuthCoordinator.shared.authorize(config: providerConfig)
+    }
+
+    private static func infoString(for key: String) -> String {
+        (Bundle.main.object(forInfoDictionaryKey: key) as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private static func registeredURLSchemes() -> Set<String> {
+        guard let urlTypes = Bundle.main.object(forInfoDictionaryKey: "CFBundleURLTypes")
+                as? [[String: Any]] else {
+            return []
+        }
+
+        return Set(
+            urlTypes
+                .compactMap { $0["CFBundleURLSchemes"] as? [String] }
+                .flatMap { $0 }
+                .map { $0.lowercased() }
+        )
     }
 }

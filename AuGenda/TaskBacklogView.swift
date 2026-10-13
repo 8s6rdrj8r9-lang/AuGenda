@@ -31,10 +31,36 @@ enum BacklogSortMode: String, CaseIterable {
     case friction     = "Easiest First"
 }
 
+private struct PendingTaskListImport {
+    let tasks: [AgendaTask]
+    let format: TaskExportFormat
+    let diagnostics: [TaskImportDiagnostic]
+
+    var previewMessage: String {
+        let sampleTitles = tasks.prefix(3).map(\.title)
+            .joined(separator: ", ")
+        let remaining = max(0, tasks.count - 3)
+        let sampleSuffix = remaining > 0 ? " (+\(remaining) more)" : ""
+        let warningText = diagnostics.map(\.localizedDescription)
+            .joined(separator: "\n")
+        return [
+            "\(tasks.count) validated task\(tasks.count == 1 ? "" : "s") from \(format.displayName).",
+            sampleTitles.isEmpty ? nil : "Preview: \(sampleTitles)\(sampleSuffix)",
+            warningText.isEmpty ? nil : warningText
+        ]
+        .compactMap { $0 }
+        .joined(separator: "\n\n")
+    }
+}
+
 
 // MARK: - Task Backlog View
 
 struct TaskBacklogView: View {
+
+    private static let maximumFetchedTasks = 1_000
+    private static let maximumFetchedRelationships = 20_000
+    private static let taskPageSize = 100
 
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var profileManager: ActiveProfileManager
@@ -44,20 +70,46 @@ struct TaskBacklogView: View {
     )
     private var tasks: [AgendaTask]
 
+    @Query private var blockingRelationships: [TaskRelationship]
+
     @State private var filter: TaskFilter = .all
     @State private var sortMode: BacklogSortMode = .ndPriority
     @State private var energyLevel: Int = 3
     @State private var showAddTask = false
     @State private var showBrainDump = false
     @State private var selectedTask: AgendaTask? = nil
+    @State private var visibleTaskLimit = Self.taskPageSize
 
     // Import / Export state
     @State private var showExporter = false
     @State private var showImporter = false
+    @State private var showBackupImporter = false
+    @State private var showTaskImportConfirmation = false
+    @State private var showBackupRestoreConfirmation = false
     @State private var exportDocument = TaskTextFileDocument()
     @State private var exportFormat: TaskExportFormat = .markdown
+    @State private var exportIsWholeBackup = false
+    @State private var pendingTaskImport: PendingTaskListImport? = nil
+    @State private var pendingBackupRestore: AuGendaBackupEnvelope? = nil
     @State private var importFeedback: String? = nil
     @State private var importExportPassword: String = ""
+
+    init() {
+        var descriptor = FetchDescriptor<AgendaTask>(
+            predicate: #Predicate { !$0.isComplete && !$0.isAbandoned },
+            sortBy: [SortDescriptor(\.sortOrder)]
+        )
+        descriptor.fetchLimit = Self.maximumFetchedTasks
+        _tasks = Query(descriptor)
+
+        var relationshipDescriptor = FetchDescriptor<TaskRelationship>(
+            predicate: #Predicate {
+                $0.typeRaw == "blocks" || $0.typeRaw == "follows"
+            }
+        )
+        relationshipDescriptor.fetchLimit = Self.maximumFetchedRelationships
+        _blockingRelationships = Query(relationshipDescriptor)
+    }
 
     private var activeProfileID: UUID? { profileManager.activeProfile?.clientID }
     private var activePrefs: ProfilePreferences? { profileManager.activePreferences }
@@ -74,46 +126,6 @@ struct TaskBacklogView: View {
         }
     }
 
-    private var filteredTasks: [AgendaTask] {
-        switch filter {
-        case .all:
-            return sorted(profileTasks.filter { $0.isActionable })
-        case .suggest:
-            return profileTasks
-                .filter {
-                    $0.isActionable &&
-                    !$0.isBlocked(in: modelContext) &&
-                    $0.difficultyRank <= energyLevel * 2
-                }
-                .sorted { $0.ndPriorityScore > $1.ndPriorityScore }
-        case .waiting:
-            return profileTasks.filter { !$0.waitingOn.isEmpty }
-        }
-    }
-
-    private var hiddenCount: Int {
-        profileTasks.filter { $0.isActionable }.count - filteredTasks.count
-    }
-
-    private func sorted(_ items: [AgendaTask]) -> [AgendaTask] {
-        switch sortMode {
-        case .sortOrder:
-            return items  // already sorted by @Query
-        case .ndPriority:
-            return items.sorted { $0.ndPriorityScore > $1.ndPriorityScore }
-        case .dueDate:
-            return items.sorted {
-                switch ($0.dueDate, $1.dueDate) {
-                case let (a?, b?): return a < b
-                case (_?, nil):   return true   // has date sorts before nil
-                default:          return false
-                }
-            }
-        case .friction:
-            return items.sorted { $0.frictionLevel < $1.frictionLevel }
-        }
-    }
-
     // MARK: - Import / Export
 
     /// Default filename presented in the system Save dialog. Includes today's
@@ -121,31 +133,134 @@ struct TaskBacklogView: View {
     private var defaultExportFilename: String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        return "AuGenda-tasks-\(formatter.string(from: .now)).\(exportFormat.fileExtension)"
+        if exportIsWholeBackup {
+            return "AuGenda-full-backup-\(formatter.string(from: .now)).augendabackup"
+        }
+        return "AuGenda-active-tasks-\(formatter.string(from: .now)).\(exportFormat.fileExtension)"
     }
 
-    /// Gather every actionable AgendaTask for the active profile, serialize
+    private var exportContentType: UTType {
+        exportIsWholeBackup ? .data : exportFormat.contentType
+    }
+
+    /// Gather every active AgendaTask for the active profile, serialize
     /// in the chosen format, and trigger the system file-exporter. The actual
     /// "Save to…" dialog is presented by `.fileExporter`.
     private func beginExport(format: TaskExportFormat) {
         let allForProfile = profileTasks
             .sorted { $0.sortOrder < $1.sortOrder }
-        var payload = TaskExporter.export(allForProfile, as: format)
 
-        if !importExportPassword.isEmpty {
-            if let encrypted = TaskExporter.encrypt(payload, password: importExportPassword) {
-                payload = encrypted
+        do {
+            var payload = try TaskExporter.export(allForProfile, as: format)
+            if !importExportPassword.isEmpty {
+                // Throwing encryption is intentionally fail-closed: the
+                // exporter is never presented with plaintext after a request
+                // for password protection.
+                payload = try TaskExporter.encrypt(
+                    payload,
+                    password: importExportPassword
+                )
+            }
+
+            exportFormat = format
+            exportIsWholeBackup = false
+            exportDocument = TaskTextFileDocument(text: payload)
+            showExporter = true
+        } catch {
+            importFeedback = "Export failed: \(error.localizedDescription)"
+            ErrorBannerController.shared.show("Export failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Full-product backups are always password protected. The archive includes
+    /// every SwiftData entity and safe product preference, but never Keychain
+    /// API keys, OAuth tokens, or reusable consent receipts.
+    private func beginWholeBackup() {
+        do {
+            let payload = try AuGendaBackupService.encryptedArchive(
+                from: modelContext,
+                password: importExportPassword
+            )
+            exportIsWholeBackup = true
+            exportDocument = TaskTextFileDocument(text: payload)
+            showExporter = true
+        } catch {
+            importFeedback = "Full backup failed: \(error.localizedDescription)"
+            ErrorBannerController.shared.show(
+                "Full backup failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func handleBackupImportResult(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let error):
+            importFeedback = "Backup restore failed: \(error.localizedDescription)"
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            let needsScope = url.startAccessingSecurityScopedResource()
+            defer { if needsScope { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let values = try url.resourceValues(forKeys: [.fileSizeKey])
+                if let size = values.fileSize,
+                   size > AuGendaBackupService.maximumBackupBytes {
+                    throw AuGendaBackupError.backupTooLarge
+                }
+                let data = try Data(contentsOf: url, options: .mappedIfSafe)
+                guard let archive = String(data: data, encoding: .utf8) else {
+                    throw AuGendaBackupError.decryptionFailed
+                }
+                pendingBackupRestore = try AuGendaBackupService.decodeEncryptedArchive(
+                    archive,
+                    password: importExportPassword
+                )
+                showBackupRestoreConfirmation = true
+            } catch {
+                pendingBackupRestore = nil
+                importFeedback = "Backup restore failed without changing your data: \(error.localizedDescription)"
+                ErrorBannerController.shared.show(
+                    "Backup restore failed: \(error.localizedDescription)"
+                )
             }
         }
+    }
 
-        exportFormat = format
-        exportDocument = TaskTextFileDocument(text: payload)
-        showExporter = true
+    private func confirmBackupRestore() {
+        guard let pendingBackupRestore else { return }
+        do {
+            let summary = try AuGendaBackupService.restore(
+                pendingBackupRestore,
+                in: modelContext,
+                afterCommit: {
+                    profileManager.loadActiveProfile()
+                    NotificationManager.shared.removeAllNotifications()
+                    NotificationManager.shared.reconcilePendingAgendaNotifications()
+                    NotificationManager.shared.reconcileFocusSessionState()
+                    #if canImport(WatchConnectivity)
+                    WatchConnectivityManager.shared.sendSyncSnapshot()
+                    #endif
+                }
+            )
+            self.pendingBackupRestore = nil
+            importFeedback = "Restored \(summary.restoredEntityCount) records and \(summary.restoredPreferenceCount) preferences. API keys and provider consent were not restored."
+        } catch AuGendaBackupError.historyRollbackFailed {
+            self.pendingBackupRestore = nil
+            importFeedback = "Restore stopped, but local AI history could not be fully rolled back. Tasks and preferences were not committed. Keep this backup, restart AuGenda, and retry recovery before making further changes."
+            ErrorBannerController.shared.show(
+                "Backup restore needs recovery: AI history rollback failed."
+            )
+        } catch {
+            self.pendingBackupRestore = nil
+            importFeedback = "Backup restore failed and saved data was left unchanged: \(error.localizedDescription)"
+            ErrorBannerController.shared.show(
+                "Backup restore failed: \(error.localizedDescription)"
+            )
+        }
     }
 
     /// Read the picked file, detect format from its extension, parse, and
-    /// append-insert the resulting AgendaTasks into the model context. The
-    /// importer never deletes existing data — duplicates are accepted.
+    /// atomically insert new tasks. Stable IDs make repeated imports
+    /// idempotent; existing records are left unchanged.
     private func handleImportResult(_ result: Result<[URL], Error>) {
         switch result {
         case .failure(let error):
@@ -161,110 +276,86 @@ struct TaskBacklogView: View {
             defer { if needsScope { url.stopAccessingSecurityScopedResource() } }
 
             guard let format = TaskImporter.detectFormat(filename: url.lastPathComponent) else {
-                let ext = url.lastPathComponent.lowercased()
-                if ext.hasSuffix(".yaml") || ext.hasSuffix(".yml") {
-                    // Bypass content-type restriction — YAML is plain text
-                    importYAML(url: url)
-                    return
-                }
                 importFeedback = "Couldn't detect the file format from the extension. Supported: .json .yaml .yml .csv .md .markdown .txt"
                 return
             }
-            guard let data = try? Data(contentsOf: url),
-                  let text = String(data: data, encoding: .utf8) else {
-                importFeedback = "Couldn't read the file."
-                return
-            }
 
-            var imported = TaskImporter.parse(text, as: format)
-            if imported.isEmpty, !importExportPassword.isEmpty {
-                if let decrypted = TaskExporter.decrypt(text, password: importExportPassword) {
-                    imported = TaskImporter.parse(decrypted, as: format)
-                }
-            }
-            guard !imported.isEmpty else {
-                importFeedback = "No tasks found in the file."
-                return
-            }
-
-            let profileID = profileManager.activeProfile?.clientID
-            var insertedCount = 0
-            for task in imported {
-                let taskID = task.clientID
-                let dupDescriptor = FetchDescriptor<AgendaTask>(
-                    predicate: #Predicate { $0.clientID == taskID }
-                )
-                let existing = (try? modelContext.fetch(dupDescriptor))?.first
-                if existing != nil {
-                    continue
-                }
-                task.assignedToProfileID = profileID
-                modelContext.insert(task)
-                insertedCount += 1
-            }
             do {
-                try modelContext.save()
-                let skippedCount = imported.count - insertedCount
-                if skippedCount > 0 {
-                    importFeedback = "Imported \(insertedCount) task\(insertedCount == 1 ? "" : "s"). Skipped \(skippedCount) duplicate\(skippedCount == 1 ? "" : "s")."
-                } else {
-                    importFeedback = "Imported \(insertedCount) task\(insertedCount == 1 ? "" : "s") from \(format.displayName)."
+                let values = try url.resourceValues(forKeys: [.fileSizeKey])
+                if let size = values.fileSize, size > TaskImporter.maximumImportBytes {
+                    throw TaskPortabilityError.importTooLarge
                 }
+                let data = try Data(contentsOf: url, options: .mappedIfSafe)
+                guard let text = String(data: data, encoding: .utf8) else {
+                    throw TaskPortabilityError.invalidFormat("file isn't UTF-8 text")
+                }
+
+                let preview = try TaskImporter.previewImport(
+                    text,
+                    as: format,
+                    password: importExportPassword
+                )
+                guard !preview.tasks.isEmpty else {
+                    importFeedback = "The task list is valid but contains no tasks."
+                    return
+                }
+                pendingTaskImport = PendingTaskListImport(
+                    tasks: preview.tasks,
+                    format: format,
+                    diagnostics: preview.diagnostics
+                )
+                showTaskImportConfirmation = true
+            } catch TaskPortabilityError.validationFailed(let diagnostics) {
+                let details = diagnostics.map(\.localizedDescription)
+                    .joined(separator: "\n")
+                importFeedback = "Import rejected without changing your saved tasks:\n\(details)"
+                ErrorBannerController.shared.show(
+                    "Import rejected with \(diagnostics.count) invalid field\(diagnostics.count == 1 ? "" : "s")."
+                )
             } catch {
-                importFeedback = "Import saved to memory but couldn't persist: \(error.localizedDescription)"
+                importFeedback = "Import failed without changing your saved tasks: \(error.localizedDescription)"
                 ErrorBannerController.shared.show("Import failed: \(error.localizedDescription)")
             }
         }
     }
 
-    private func importYAML(url: URL) {
-        guard let data = try? Data(contentsOf: url),
-              let text = String(data: data, encoding: .utf8) else {
-            importFeedback = "Couldn't read the file."
-            return
-        }
-        var imported = TaskImporter.parse(text, as: .yaml)
-        if imported.isEmpty, !importExportPassword.isEmpty {
-            if let decrypted = TaskExporter.decrypt(text, password: importExportPassword) {
-                imported = TaskImporter.parse(decrypted, as: .yaml)
-            }
-        }
-        guard !imported.isEmpty else {
-            importFeedback = "No tasks found in the file."
-            return
-        }
-        let profileID = profileManager.activeProfile?.clientID
-        var insertedCount = 0
-        for task in imported {
-            let taskID = task.clientID
-            let dupDescriptor = FetchDescriptor<AgendaTask>(
-                predicate: #Predicate { $0.clientID == taskID }
-            )
-            let existing = (try? modelContext.fetch(dupDescriptor))?.first
-            if existing != nil {
-                continue
-            }
-            task.assignedToProfileID = profileID
-            modelContext.insert(task)
-            insertedCount += 1
-        }
+    private func confirmTaskImport() {
+        guard let pendingTaskImport else { return }
         do {
-            try modelContext.save()
-            let skippedCount = imported.count - insertedCount
-            if skippedCount > 0 {
-                importFeedback = "Imported \(insertedCount) task\(insertedCount == 1 ? "" : "s"). Skipped \(skippedCount) duplicate\(skippedCount == 1 ? "" : "s")."
+            let summary = try TaskImportService.apply(
+                pendingTaskImport.tasks,
+                assignedTo: profileManager.activeProfile?.clientID,
+                using: modelContext.container
+            )
+            self.pendingTaskImport = nil
+            if summary.skippedDuplicateCount > 0 {
+                importFeedback = "Imported \(summary.insertedCount) task\(summary.insertedCount == 1 ? "" : "s"). Skipped \(summary.skippedDuplicateCount) existing task\(summary.skippedDuplicateCount == 1 ? "" : "s")."
             } else {
-                importFeedback = "Imported \(insertedCount) task\(insertedCount == 1 ? "" : "s") from YAML."
+                importFeedback = "Imported \(summary.insertedCount) task\(summary.insertedCount == 1 ? "" : "s") from \(pendingTaskImport.format.displayName)."
             }
         } catch {
-            importFeedback = "Import saved to memory but couldn't persist: \(error.localizedDescription)"
-            ErrorBannerController.shared.show("Import failed: \(error.localizedDescription)")
+            self.pendingTaskImport = nil
+            importFeedback = "Import failed without changing your saved tasks: \(error.localizedDescription)"
+            ErrorBannerController.shared.show(
+                "Import failed: \(error.localizedDescription)"
+            )
         }
     }
 
     // MARK: Body
 
     var body: some View {
+        let projection = BacklogProjection.make(
+            tasks: tasks,
+            relationships: blockingRelationships,
+            activeProfileID: activeProfileID,
+            filter: filter,
+            sortMode: sortMode,
+            energyLevel: energyLevel
+        )
+        let visibleTasks = Array(projection.tasks.prefix(visibleTaskLimit))
+        let hiddenCount = max(0, projection.actionableCount - projection.tasks.count)
+
         NavigationStack {
             VStack(spacing: 0) {
                 filterBar
@@ -276,15 +367,18 @@ struct TaskBacklogView: View {
                         filteredOutCount: hiddenCount
                     )
                 } else {
-                    sortBar
+                    sortBar(taskCount: projection.tasks.count)
                 }
 
                 Divider()
 
-                if filteredTasks.isEmpty {
+                if projection.tasks.isEmpty {
                     emptyState
                 } else {
-                    taskList
+                    taskList(
+                        visibleTasks: visibleTasks,
+                        totalCount: projection.tasks.count
+                    )
                 }
             }
             .navigationTitle("Tasks")
@@ -340,22 +434,37 @@ struct TaskBacklogView: View {
                     #endif
                 }()) {
                     Menu {
-                        Section("Export") {
+                        Section("Export active task list") {
                             ForEach(TaskExportFormat.allCases) { format in
                                 Button(format.displayName) {
                                     beginExport(format: format)
                                 }
                             }
+                            Text("Task list only — not a full backup")
+                            Text("JSON preserves steps. YAML and CSV omit steps; Markdown and plain text are intentionally lossy.")
                         }
-                        Section("Import") {
+                        Section("Import task list") {
                             Button {
                                 showImporter = true
                             } label: {
                                 Label("From file…", systemImage: "tray.and.arrow.down")
                             }
                         }
+                        Section("Full encrypted backup") {
+                            Button {
+                                beginWholeBackup()
+                            } label: {
+                                Label("Create full backup…", systemImage: "lock.doc")
+                            }
+                            Button {
+                                showBackupImporter = true
+                            } label: {
+                                Label("Restore full backup…", systemImage: "arrow.counterclockwise.circle")
+                            }
+                            Text("Password required. Includes all product records and safe preferences; excludes credentials.")
+                        }
                         Section {
-                            SecureField("Password (optional)", text: $importExportPassword)
+                            SecureField("Encryption password (optional)", text: $importExportPassword)
                                 .textContentType(.password)
                         }
                     } label: {
@@ -363,7 +472,7 @@ struct TaskBacklogView: View {
                             .font(.title2)
                             .foregroundStyle(Tokens.Color.primary)
                     }
-                    .accessibilityLabel("Import or export tasks")
+                    .accessibilityLabel("Import or export active task list")
                 }
             }
             .sheet(isPresented: $showAddTask) {
@@ -383,7 +492,7 @@ struct TaskBacklogView: View {
             .fileExporter(
                 isPresented: $showExporter,
                 document: exportDocument,
-                contentType: exportFormat.contentType,
+                contentType: exportContentType,
                 defaultFilename: defaultExportFilename
             ) { result in
                 // Silent on success; surface error via the same banner the
@@ -401,8 +510,53 @@ struct TaskBacklogView: View {
             ) { result in
                 handleImportResult(result)
             }
+            .fileImporter(
+                isPresented: $showBackupImporter,
+                allowedContentTypes: [.data, .text, .plainText],
+                allowsMultipleSelection: false
+            ) { result in
+                handleBackupImportResult(result)
+            }
+            .confirmationDialog(
+                "Import this validated task list?",
+                isPresented: $showTaskImportConfirmation,
+                titleVisibility: .visible
+            ) {
+                if let pendingTaskImport {
+                    Button(
+                        "Import \(pendingTaskImport.tasks.count) task\(pendingTaskImport.tasks.count == 1 ? "" : "s")"
+                    ) {
+                        confirmTaskImport()
+                    }
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingTaskImport = nil
+                }
+            } message: {
+                if let pendingTaskImport {
+                    Text(pendingTaskImport.previewMessage)
+                }
+            }
+            .confirmationDialog(
+                "Replace all AuGenda product data?",
+                isPresented: $showBackupRestoreConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Replace and restore", role: .destructive) {
+                    confirmBackupRestore()
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingBackupRestore = nil
+                }
+            } message: {
+                if let pendingBackupRestore {
+                    Text(
+                        "This validated backup contains \(pendingBackupRestore.totalEntityCount) records. Current tasks, profiles, blocks, notes, focus history, and preferences will be replaced. Credentials are not included."
+                    )
+                }
+            }
             .alert(
-                "Import",
+                "Task List Import or Export",
                 isPresented: Binding(
                     get: { importFeedback != nil },
                     set: { if !$0 { importFeedback = nil } }
@@ -425,11 +579,15 @@ struct TaskBacklogView: View {
             energyLevel = activePrefs?.currentEnergyLevel ?? 3
             InterruptionContext.recordActivity(contextLabel: "browsing tasks")
         }
+        .onChange(of: filter) { _, _ in resetVisiblePage() }
+        .onChange(of: sortMode) { _, _ in resetVisiblePage() }
+        .onChange(of: energyLevel) { _, _ in resetVisiblePage() }
+        .onChange(of: activeProfileID) { _, _ in resetVisiblePage() }
     }
 
     // MARK: - Sort Bar (All / Waiting modes)
 
-    private var sortBar: some View {
+    private func sortBar(taskCount: Int) -> some View {
         HStack(spacing: Tokens.Spacing.sm) {
             Text("Sort:")
                 .font(Tokens.Typography.caption)
@@ -463,7 +621,7 @@ struct TaskBacklogView: View {
 
             Spacer()
 
-            Text("\(filteredTasks.count) task\(filteredTasks.count == 1 ? "" : "s")")
+            Text("\(taskCount) task\(taskCount == 1 ? "" : "s")")
                 .font(Tokens.Typography.caption)
                 .foregroundColor(Color.appTextSecondary)
         }
@@ -511,10 +669,13 @@ struct TaskBacklogView: View {
     // MARK: - Task List
 
     @ViewBuilder
-    private var taskList: some View {
+    private func taskList(
+        visibleTasks: [AgendaTask],
+        totalCount: Int
+    ) -> some View {
         ScrollView {
             LazyVStack(spacing: Tokens.Spacing.xl) {
-                ForEach(filteredTasks) { task in
+                ForEach(visibleTasks) { task in
                     AgendaTaskCard(task: task, showWaitingOn: filter == .waiting) {
                         selectedTask = task
                         InterruptionContext.recordActivity(
@@ -523,10 +684,44 @@ struct TaskBacklogView: View {
                         )
                     }
                 }
+
+                if visibleTasks.count < totalCount {
+                    Button {
+                        visibleTaskLimit = min(
+                            visibleTaskLimit + Self.taskPageSize,
+                            totalCount
+                        )
+                    } label: {
+                        Label(
+                            "Show \(min(Self.taskPageSize, totalCount - visibleTasks.count)) more",
+                            systemImage: "chevron.down.circle"
+                        )
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, Tokens.Spacing.sm)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityHint(
+                        "\(totalCount - visibleTasks.count) additional matching tasks remain"
+                    )
+                }
+
+                if visibleTasks.count == totalCount,
+                   tasks.count == Self.maximumFetchedTasks {
+                    Text("Showing the first \(Self.maximumFetchedTasks.formatted()) active tasks. Complete, archive, or export older work before adding more.")
+                        .font(Tokens.Typography.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding()
+                        .accessibilityLabel("Task list limit reached")
+                }
             }
             .padding(.horizontal, Tokens.Spacing.base)
             .padding(.vertical, Tokens.Spacing.md)
         }
+    }
+
+    private func resetVisiblePage() {
+        visibleTaskLimit = Self.taskPageSize
     }
 
     // MARK: - Empty State
@@ -615,13 +810,13 @@ struct AgendaTaskCard: View {
 
                         if task.needsBodyDouble {
                             Image(systemName: "person.wave.2.fill")
-                                .font(.system(size: 10, weight: .regular))
+                                .font(.caption2)
                                 .foregroundColor(Tokens.Color.info)
                         }
 
                         if task.hyperfocusRisk {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 10, weight: .regular))
+                                .font(.caption2)
                                 .foregroundColor(Tokens.Color.warning)
                         }
 
@@ -644,7 +839,7 @@ struct AgendaTaskCard: View {
                     if task.isBlocked(in: modelContext) {
                         HStack(spacing: Tokens.Spacing.xs) {
                             Image(systemName: "lock.fill")
-                                .font(.system(size: 10))
+                                .font(.caption2)
                                 .foregroundColor(Tokens.Color.warning)
                             Text("Blocked")
                                 .font(Tokens.Typography.caption)
@@ -657,7 +852,7 @@ struct AgendaTaskCard: View {
                     if showWaitingOn && !task.waitingOn.isEmpty {
                         HStack(spacing: Tokens.Spacing.xs) {
                             Image(systemName: "clock.badge.questionmark")
-                                .font(.system(size: 10))
+                                .font(.caption2)
                                 .foregroundColor(Tokens.Color.warning)
                             Text(task.waitingOn)
                                 .font(Tokens.Typography.caption)
@@ -756,15 +951,27 @@ struct AddTaskView: View {
     @State private var waitingOn = ""
     @State private var hyperfocusRisk = false
     @State private var needsBodyDouble = false
+    @State private var excludeFromAI = false
     @State private var priority = 0
     @State private var dueDate: Date? = nil
     @State private var showDueDatePicker = false
+    @State private var recurrenceRule: RecurrenceRule = .none
     @State private var assignedToProfileID: UUID? = nil
 
     private var activeProfile: Profile? { profileManager.activeProfile }
     private var canAssign: Bool { (activeProfile?.canAssignTasks == true) && profiles.count > 1 }
+    private var canSave: Bool {
+        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (recurrenceRule == .none || showDueDatePicker)
+    }
 
-    private let contextOptions = ["home", "computer", "phone", "outside", "focus", "errand"]
+    private var contextOptions: [String] {
+        let standard = ["home", "computer", "phone", "outside", "focus", "errand"]
+        guard profileManager.activePreferences?.sensoryContextTagsEnabled == true else {
+            return standard
+        }
+        return standard + ["quiet", "low light", "headphones", "low scent"]
+    }
 
     var body: some View {
         NavigationStack {
@@ -789,7 +996,7 @@ struct AddTaskView: View {
 
                     Button(editingTask != nil ? "Save" : "Add") { save() }
                         .buttonStyle(.borderedProminent)
-                        .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(!canSave)
                         .keyboardShortcut(.defaultAction)
                 }
                 .padding(.horizontal, Tokens.Spacing.base)
@@ -845,11 +1052,10 @@ struct AddTaskView: View {
                                 Text("1 Easy").tag(1)
                                 Text("2").tag(2)
                                 Text("3 Med").tag(3)
-                                Text("4").tag(4)
-                                Text("5 Wall").tag(5)
+                                Text("4 Wall").tag(4)
                             }
                             .pickerStyle(.segmented)
-                            .frame(width: 220)
+                            .frame(width: 190)
                         }
 
                         LabeledContent("Interest level") {
@@ -866,12 +1072,13 @@ struct AddTaskView: View {
 
                         LabeledContent("Energy needed") {
                             Picker("Energy", selection: $energyRequired) {
-                                Text("Low").tag(1)
-                                Text("Med").tag(2)
-                                Text("High").tag(3)
+                                Text("1 Low").tag(1)
+                                Text("2").tag(2)
+                                Text("3").tag(3)
+                                Text("4 High").tag(4)
                             }
                             .pickerStyle(.segmented)
-                            .frame(width: 160)
+                            .frame(width: 190)
                         }
                     }
                 }
@@ -928,6 +1135,9 @@ struct AddTaskView: View {
                     Toggle(isOn: $needsBodyDouble) {
                         Label("Body double helps", systemImage: "person.2")
                     }
+                    Toggle(isOn: $excludeFromAI) {
+                        Label("Keep this task out of AI", systemImage: "hand.raised")
+                    }
                 }
 
                 // ── Waiting on ──
@@ -947,6 +1157,28 @@ struct AddTaskView: View {
                             ),
                             displayedComponents: [.date]
                         )
+                    }
+                }
+
+                Section("Repeat") {
+                    Picker("Schedule", selection: $recurrenceRule) {
+                        ForEach(RecurrenceRule.allCases) { rule in
+                            Text(rule.displayName).tag(rule)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    if recurrenceRule != .none && !showDueDatePicker {
+                        Label(
+                            "Choose a due date to anchor the repeating schedule.",
+                            systemImage: "calendar.badge.exclamationmark"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    } else if recurrenceRule != .none {
+                        Text("Completing this task creates one next future occurrence. Missed dates are not backfilled.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -987,15 +1219,23 @@ struct AddTaskView: View {
                 if let task = editingTask {
                     title              = task.title
                     notes              = task.notes
-                    frictionLevel      = task.frictionLevel
+                    frictionLevel      = min(
+                        max(task.frictionLevel, TaskFieldDomain.friction.lowerBound),
+                        TaskFieldDomain.friction.upperBound
+                    )
                     interestLevel      = task.interestLevel
-                    energyRequired     = task.energyRequired
+                    energyRequired     = min(
+                        max(task.energyRequired, TaskFieldDomain.energy.lowerBound),
+                        TaskFieldDomain.energy.upperBound
+                    )
                     estimatedMinutes   = task.estimatedMinutes
                     contextTag         = task.contextTag
                     waitingOn          = task.waitingOn
                     hyperfocusRisk     = task.hyperfocusRisk
                     needsBodyDouble    = task.needsBodyDouble
+                    excludeFromAI      = task.excludeFromAI
                     priority           = task.priority
+                    recurrenceRule     = RecurrenceRule(rawValue: task.recurrenceRule) ?? .none
                     assignedToProfileID = task.assignedToProfileID
                     if let due = task.dueDate {
                         dueDate = due
@@ -1009,51 +1249,56 @@ struct AddTaskView: View {
     }
 
     private func save() {
-        if let task = editingTask {
-            task.title            = title.trimmingCharacters(in: .whitespaces)
-            task.notes            = notes
-            task.frictionLevel    = frictionLevel
-            task.energyRequired   = energyRequired
-            task.estimatedMinutes = estimatedMinutes
-            task.contextTag       = contextTag
-            task.priority         = priority
-            task.interestLevel    = interestLevel
-            task.hyperfocusRisk   = hyperfocusRisk
-            task.needsBodyDouble  = needsBodyDouble
-            task.waitingOn        = waitingOn
-            task.dueDate          = showDueDatePicker ? dueDate : nil
-            task.assignedToProfileID = assignedToProfileID
-            if assignedToProfileID != activeProfile?.clientID {
-                task.assignedByProfileID = activeProfile?.clientID
-            }
-            task.updatedAt = .now
-        } else {
-            let task = AgendaTask(
-                title: title.trimmingCharacters(in: .whitespaces),
-                frictionLevel: frictionLevel,
-                energyRequired: energyRequired,
-                estimatedMinutes: estimatedMinutes,
-                contextTag: contextTag,
-                priority: priority,
-                interestLevel: interestLevel
-            )
-            task.notes = notes
-            task.hyperfocusRisk = hyperfocusRisk
-            task.needsBodyDouble = needsBodyDouble
-            task.waitingOn = waitingOn
-            if showDueDatePicker { task.dueDate = dueDate }
-            task.assignedToProfileID = assignedToProfileID
-            if assignedToProfileID != activeProfile?.clientID {
-                task.assignedByProfileID = activeProfile?.clientID
-            }
-            modelContext.insert(task)
-        }
         do {
-            try modelContext.save()
+            try PersistentMutation.commit(in: modelContext) {
+                if let task = editingTask {
+                    task.title            = title.trimmingCharacters(in: .whitespaces)
+                    task.notes            = notes
+                    task.frictionLevel    = frictionLevel
+                    task.energyRequired   = energyRequired
+                    task.estimatedMinutes = estimatedMinutes
+                    task.contextTag       = contextTag
+                    task.priority         = priority
+                    task.interestLevel    = interestLevel
+                    task.hyperfocusRisk   = hyperfocusRisk
+                    task.needsBodyDouble  = needsBodyDouble
+                    task.excludeFromAI    = excludeFromAI
+                    task.waitingOn        = waitingOn
+                    task.dueDate          = showDueDatePicker ? dueDate : nil
+                    task.recurrenceRule    = recurrenceRule.rawValue
+                    task.assignedToProfileID = assignedToProfileID
+                    if assignedToProfileID != activeProfile?.clientID {
+                        task.assignedByProfileID = activeProfile?.clientID
+                    }
+                    task.updatedAt = .now
+                } else {
+                    let task = AgendaTask(
+                        title: title.trimmingCharacters(in: .whitespaces),
+                        frictionLevel: frictionLevel,
+                        energyRequired: energyRequired,
+                        estimatedMinutes: estimatedMinutes,
+                        contextTag: contextTag,
+                        priority: priority,
+                        interestLevel: interestLevel
+                    )
+                    task.notes = notes
+                    task.hyperfocusRisk = hyperfocusRisk
+                    task.needsBodyDouble = needsBodyDouble
+                    task.excludeFromAI = excludeFromAI
+                    task.waitingOn = waitingOn
+                    if showDueDatePicker { task.dueDate = dueDate }
+                    task.recurrenceRule = recurrenceRule.rawValue
+                    task.assignedToProfileID = assignedToProfileID
+                    if assignedToProfileID != activeProfile?.clientID {
+                        task.assignedByProfileID = activeProfile?.clientID
+                    }
+                    modelContext.insert(task)
+                }
+            }
+            isPresented = false
         } catch {
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
         }
-        isPresented = false
     }
 }
 
@@ -1167,7 +1412,9 @@ struct BrainDumpView: View {
                                 ErrorBannerController.shared.show("Voice input is not available on this device")
                                 return
                             }
-                            isRecording ? stopRecording() : startRecording()
+                            isRecording
+                                ? stopRecording()
+                                : requestSpeechPermissionAndStart()
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: isRecording
@@ -1205,7 +1452,6 @@ struct BrainDumpView: View {
                 editorFocused = true
                 #if os(iOS)
                 voiceUnavailable = !(SFSpeechRecognizer(locale: .autoupdatingCurrent)?.isAvailable ?? false)
-                requestSpeechPermission()
                 #endif
             }
             .onDisappear {
@@ -1230,27 +1476,45 @@ struct BrainDumpView: View {
         let source: InboxItemSource = .textCapture
         #endif
 
-        for line in allLines {
-            let item = InboxItem(rawCapture: line, source: source)
-            item.assignedToProfileID = profileID
-            modelContext.insert(item)
-        }
         do {
-            try modelContext.save()
+            try PersistentMutation.commit(in: modelContext) {
+                for line in allLines {
+                    let item = InboxItem(rawCapture: line, source: source)
+                    item.assignedToProfileID = profileID
+                    modelContext.insert(item)
+                }
+            }
+            isPresented = false
         } catch {
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
         }
-        isPresented = false
     }
 
     // MARK: - Speech recognition (iOS only)
 
     #if os(iOS)
-    private func requestSpeechPermission() {
-        SFSpeechRecognizer.requestAuthorization { status in
-            DispatchQueue.main.async {
-                voiceUnavailable = (status != .authorized)
+    private func requestSpeechPermissionAndStart() {
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized:
+            startRecording()
+        case .notDetermined:
+            // Ask only after the user taps the microphone; opening a text-only
+            // brain dump must not trigger a speech privacy prompt.
+            SFSpeechRecognizer.requestAuthorization { status in
+                DispatchQueue.main.async {
+                    voiceUnavailable = (status != .authorized)
+                    if status == .authorized {
+                        startRecording()
+                    }
+                }
             }
+        case .denied, .restricted:
+            voiceUnavailable = true
+            ErrorBannerController.shared.show(
+                "Voice input is unavailable until Speech Recognition is allowed in Settings."
+            )
+        @unknown default:
+            voiceUnavailable = true
         }
     }
 

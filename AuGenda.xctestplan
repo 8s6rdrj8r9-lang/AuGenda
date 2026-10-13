@@ -1,0 +1,38 @@
+{
+  "configurations" : [
+    {
+      "id" : "4EAFC86A-A398-4FD5-968B-F64636A996FA",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "performanceAntipatternCheckerEnabled" : true,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:AuGenda.xcodeproj",
+      "identifier" : "8EDD1E3B2FC3B0B8008482EC",
+      "name" : "AuGenda"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:AuGenda.xcodeproj",
+        "identifier" : "8EDD1E4C2FC3B0BB008482EC",
+        "name" : "AuGendaTests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:AuGenda.xcodeproj",
+        "identifier" : "8EDD1E562FC3B0BB008482EC",
+        "name" : "AuGendaUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

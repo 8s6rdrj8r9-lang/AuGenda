@@ -7,10 +7,15 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		8E5A8D102FCA96CB0018EA71 /* AuGendaWatch Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 8E5A8CF02FCA96C90018EA71 /* AuGendaWatch Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		8E5A8D102FCA96CB0018EA71 /* AuGendaWatch Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 8E5A8CF02FCA96C90018EA71 /* AuGendaWatch Watch App.app */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		8E5A8D222FCA96F50018EA71 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8E5A8D212FCA96F50018EA71 /* WidgetKit.framework */; };
 		8E5A8D242FCA96F50018EA71 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8E5A8D232FCA96F50018EA71 /* SwiftUI.framework */; };
 		8E5A8D332FCA96F60018EA71 /* AuGendaWatchWidgetsExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 8E5A8D1F2FCA96F50018EA71 /* AuGendaWatchWidgetsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A0D17C100000000000000001 /* WatchSyncContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0D17C000000000000000001 /* WatchSyncContract.swift */; };
+		A0D17C100000000000000002 /* WatchSyncContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0D17C000000000000000001 /* WatchSyncContract.swift */; };
+		A0D17C100000000000000003 /* WatchSyncContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0D17C000000000000000001 /* WatchSyncContract.swift */; };
+		A0D17C100000000000000004 /* WatchSharedStateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0D17C000000000000000002 /* WatchSharedStateStore.swift */; };
+		A0D17C100000000000000005 /* WatchSharedStateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0D17C000000000000000002 /* WatchSharedStateStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -93,6 +98,9 @@
 		8EDD1E3C2FC3B0B8008482EC /* AuGenda.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AuGenda.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8EDD1E4D2FC3B0BB008482EC /* AuGendaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AuGendaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8EDD1E572FC3B0BB008482EC /* AuGendaUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AuGendaUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		8EE401A0304B8AE200621679 /* AuGenda.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = AuGenda.xctestplan; sourceTree = "<group>"; };
+		A0D17C000000000000000001 /* WatchSyncContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSyncContract.swift; sourceTree = "<group>"; };
+		A0D17C000000000000000002 /* WatchSharedStateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSharedStateStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -106,7 +114,10 @@
 		8EDD1E5F2FC3B0BB008482EC /* Exceptions for "AuGenda" folder in "AuGenda" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				"AuGenda-Watch-ClaudeCode-Prompt.md",
+				Fonts/README.md,
 				Info.plist,
+				"Scripts/validate-oauth.sh",
 			);
 			target = 8EDD1E3B2FC3B0B8008482EC /* AuGenda */;
 		};
@@ -223,6 +234,8 @@
 		8EDD1E332FC3B0B8008482EC = {
 			isa = PBXGroup;
 			children = (
+				8EE401A0304B8AE200621679 /* AuGenda.xctestplan */,
+				A0D17C300000000000000001 /* Shared */,
 				8EDD1E3E2FC3B0B8008482EC /* AuGenda */,
 				8EDD1E502FC3B0BB008482EC /* AuGendaTests */,
 				8EDD1E5A2FC3B0BB008482EC /* AuGendaUITests */,
@@ -247,6 +260,15 @@
 				8E5A8D1F2FCA96F50018EA71 /* AuGendaWatchWidgetsExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A0D17C300000000000000001 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				A0D17C000000000000000001 /* WatchSyncContract.swift */,
+				A0D17C000000000000000002 /* WatchSharedStateStore.swift */,
+			);
+			path = Shared;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -533,6 +555,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A0D17C100000000000000002 /* WatchSyncContract.swift in Sources */,
+				A0D17C100000000000000004 /* WatchSharedStateStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -554,6 +578,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A0D17C100000000000000003 /* WatchSyncContract.swift in Sources */,
+				A0D17C100000000000000005 /* WatchSharedStateStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -561,6 +587,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A0D17C100000000000000001 /* WatchSyncContract.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -593,6 +620,7 @@
 		};
 		8E5A8D0F2FCA96CB0018EA71 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
+			platformFilter = ios;
 			target = 8E5A8CEF2FCA96C90018EA71 /* AuGendaWatch Watch App */;
 			targetProxy = 8E5A8D0E2FCA96CB0018EA71 /* PBXContainerItemProxy */;
 		};
@@ -619,6 +647,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "AuGendaWatch Watch App/AuGendaWatch.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = GAB62HZP25;
@@ -634,6 +663,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ensdev.AuGenda.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -652,6 +682,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "AuGendaWatch Watch App/AuGendaWatch.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = GAB62HZP25;
@@ -667,6 +698,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ensdev.AuGenda.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -778,6 +810,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = AuGendaWatchWidgets/AuGendaWatchWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = GAB62HZP25;
@@ -794,6 +827,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ensdev.AuGenda.watchkitapp.AuGendaWatchWidgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -811,6 +845,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = AuGendaWatchWidgets/AuGendaWatchWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = GAB62HZP25;
@@ -827,6 +862,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ensdev.AuGenda.watchkitapp.AuGendaWatchWidgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -845,23 +881,26 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				AUGENDA_GOOGLE_CLIENT_ID = YOUR_CLIENT_ID_HERE.apps.googleusercontent.com;
+				AUGENDA_GOOGLE_REDIRECT_SCHEME = YOUR_CLIENT_ID_REVERSED;
+				CODE_SIGN_ENTITLEMENTS = AuGenda/AuGenda.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = GAB62HZP25;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
-				ENABLE_OUTGOING_NETWORK_CONNECTIONS = NO;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
 				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
 				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
 				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
 				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
-				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = YES;
 				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
 				ENABLE_RESOURCE_ACCESS_USB = NO;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AuGenda/Info.plist;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -900,23 +939,26 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				AUGENDA_GOOGLE_CLIENT_ID = YOUR_CLIENT_ID_HERE.apps.googleusercontent.com;
+				AUGENDA_GOOGLE_REDIRECT_SCHEME = YOUR_CLIENT_ID_REVERSED;
+				CODE_SIGN_ENTITLEMENTS = AuGenda/AuGenda.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = GAB62HZP25;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
-				ENABLE_OUTGOING_NETWORK_CONNECTIONS = NO;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
 				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
 				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
 				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
 				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
-				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = YES;
 				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
 				ENABLE_RESOURCE_ACCESS_USB = NO;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AuGenda/Info.plist;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;

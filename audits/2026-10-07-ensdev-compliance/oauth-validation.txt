@@ -1,0 +1,3 @@
+Method: bash frozen AuGenda/Scripts/validate-oauth.sh on built Release iOS Info.plist
+Exit: 0
+Output: note: Google OAuth is not configured; sign-in remains disabled

@@ -4,8 +4,8 @@
 <dict>
 	<!--
 	  Privacy Manifest — AuGenda Watch App.
-	  Mirrors the iOS manifest: no tracking, no third-party data collection,
-	  app-internal UserDefaults only.
+	  No tracking or third-party data collection. The app reads and writes the
+	  shared App Group snapshot/outbox through UserDefaults.
 	-->
 	<key>NSPrivacyTracking</key>
 	<false/>

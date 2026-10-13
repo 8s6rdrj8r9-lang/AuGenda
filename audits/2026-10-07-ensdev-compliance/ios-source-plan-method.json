@@ -1,0 +1,5 @@
+{
+  "purpose": "Class C: distinguish test-home execution changes from the original product/scheme behavior.",
+  "method": "Restore original main scheme and test-plan bytes in disposable execution copy; same Swift/test/resource/build-setting bytes; dedicated audit simulator; UI test itself passes -ui-testing.",
+  "limits": "Original first run and bounded warm retry retained. No app remediation or modified assertions."
+}

@@ -76,7 +76,7 @@ struct SectionHeader: View {
             if isCollapsible {
                 Button(action: { isExpanded.toggle() }) {
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundColor(Color.appTextSecondary)
                 }
                 .buttonStyle(.plain)
@@ -175,7 +175,7 @@ struct TabBar: View {
                     Button(action: { selectedTab = tab }) {
                         VStack(spacing: Tokens.Spacing.xs) {
                             Image(systemName: tab.icon)
-                                .font(.system(size: 18, weight: .semibold))
+                                .font(.title3.weight(.semibold))
 
                             Text(tab.label)
                                 .font(Tokens.Typography.caption)
@@ -214,7 +214,7 @@ struct Sidebar: View {
                 Button(action: { selectedTab = tab }) {
                     HStack(spacing: Tokens.Spacing.base) {
                         Image(systemName: tab.icon)
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.headline)
                             .frame(width: 24)
 
                         Text(tab.label)
@@ -302,7 +302,7 @@ struct Breadcrumb: View {
 
                 if index < path.count - 1 {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.caption.weight(.semibold))
                         .foregroundColor(Color.appTextSecondary)
                 }
             }
@@ -327,7 +327,7 @@ struct EmptyState: View {
     var body: some View {
         VStack(spacing: Tokens.Spacing.lg) {
             Image(systemName: icon)
-                .font(.system(size: 48, weight: .light))
+                .font(.largeTitle.weight(.light))
                 .foregroundColor(Color.appTextSecondary)
 
             VStack(spacing: Tokens.Spacing.sm) {

@@ -182,11 +182,13 @@ struct CognitiveStateSelector: View {
                 isPresented = false
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 22))
+                    .font(.title3)
                     .foregroundColor(Color.appTextSecondary)
+                    .frame(minWidth: 44, minHeight: 44)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Close")
+            .accessibilityHint("Keeps the current capacity setting")
         }
         .padding(.horizontal, Tokens.Spacing.lg)
         .padding(.top, Tokens.Spacing.base)
@@ -198,6 +200,7 @@ struct CognitiveStateSelector: View {
                 .font(Tokens.Typography.h1)
                 .foregroundColor(Color.appTextPrimary)
                 .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("capacity.title")
 
             Text("No wrong answers. You can change this any time from settings or by tapping the badge on Today.")
                 .font(Tokens.Typography.body)
@@ -218,7 +221,7 @@ struct CognitiveStateSelector: View {
             VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
                 HStack(spacing: Tokens.Spacing.sm) {
                     Image(systemName: "leaf.fill")
-                        .font(.system(size: 20, weight: .regular))
+                        .font(.title3)
                         .foregroundStyle(Color.warmEmber)
                     Text("I'm overwhelmed")
                         .font(Tokens.Typography.h2)
@@ -242,6 +245,7 @@ struct CognitiveStateSelector: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("I'm overwhelmed. Set Survival mode — show me just one thing.")
+        .accessibilityIdentifier("capacity.survival")
     }
 
     /// Quieter dropdown of the other three states. Vertical list, each
@@ -268,7 +272,7 @@ struct CognitiveStateSelector: View {
         } label: {
             HStack(alignment: .top, spacing: Tokens.Spacing.md) {
                 Image(systemName: current == mode ? "circle.inset.filled" : "circle")
-                    .font(.system(size: 18))
+                    .font(.headline)
                     .foregroundColor(current == mode ? Color.appAccent : Color.appBorder)
                     .padding(.top, 2)
                 VStack(alignment: .leading, spacing: 2) {
@@ -327,7 +331,10 @@ struct CognitiveStateSelector: View {
             do {
                 try modelContext.save()
             } catch {
+                modelContext.rollback()
+                current = prefs.effectiveDensity
                 ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+                return
             }
         } else {
             // No active profile yet — first-launch flow. Park the choice;
@@ -369,7 +376,7 @@ struct CheckInFrequencyChooser: View {
                 } label: {
                     HStack(alignment: .top, spacing: Tokens.Spacing.md) {
                         Image(systemName: selection == freq ? "circle.inset.filled" : "circle")
-                            .font(.system(size: 18))
+                            .font(.headline)
                             .foregroundColor(selection == freq ? Color.appAccent : Color.appBorder)
                             .padding(.top, 2)
                         VStack(alignment: .leading, spacing: 2) {

@@ -107,12 +107,12 @@ enum Tokens {
         static let fontFamily = "Helvetica Neue"
 
         // Predefined styles
-        static let h1 = Font.system(size: h1Size, weight: .bold, design: .default)
-        static let h2 = Font.system(size: h2Size, weight: .semibold, design: .default)
-        static let h3 = Font.system(size: h3Size, weight: .semibold, design: .default)
-        static let body = Font.system(size: bodySize, weight: .regular, design: .default)
-        static let label = Font.system(size: labelSize, weight: .semibold, design: .default)
-        static let caption = Font.system(size: captionSize, weight: .regular, design: .default)
+        static let h1 = Font.largeTitle.weight(.bold)
+        static let h2 = Font.title2.weight(.semibold)
+        static let h3 = Font.headline
+        static let body = Font.body
+        static let label = Font.callout.weight(.semibold)
+        static let caption = Font.caption
 
         // Min/max text sizing
         static let minTextSize: CGFloat = 14
@@ -268,10 +268,6 @@ struct ReduceMotionKey: EnvironmentKey {
     static let defaultValue: Bool = Tokens.Accessibility.reduceMotion
 }
 
-struct TextSizeMultiplierKey: EnvironmentKey {
-    static let defaultValue: CGFloat = 1.0  // Default: 100%
-}
-
 struct LowStimulationModeKey: EnvironmentKey {
     static let defaultValue: Bool = false
 }
@@ -284,11 +280,6 @@ extension EnvironmentValues {
     var reduceMotion: Bool {
         get { self[ReduceMotionKey.self] }
         set { self[ReduceMotionKey.self] = newValue }
-    }
-
-    var textSizeMultiplier: CGFloat {
-        get { self[TextSizeMultiplierKey.self] }
-        set { self[TextSizeMultiplierKey.self] = newValue }
     }
 
     var lowStimulationMode: Bool {

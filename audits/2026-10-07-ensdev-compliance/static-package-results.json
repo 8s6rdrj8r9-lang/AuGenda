@@ -1,0 +1,147 @@
+{
+  "static_checks": [
+    {
+      "file": "AuGenda/Assets.xcassets/AccentColor.colorset/Contents.json",
+      "method": "JSON decode",
+      "exit_code": 0
+    },
+    {
+      "file": "AuGenda/Assets.xcassets/AppIcon.appiconset/Contents.json",
+      "method": "JSON decode",
+      "exit_code": 0
+    },
+    {
+      "file": "AuGenda/Assets.xcassets/Contents.json",
+      "method": "JSON decode",
+      "exit_code": 0
+    },
+    {
+      "file": "AuGenda/Assets.xcassets/LaunchBackground.colorset/Contents.json",
+      "method": "JSON decode",
+      "exit_code": 0
+    },
+    {
+      "file": "AuGenda/AuGenda.entitlements",
+      "method": "plutil -lint",
+      "exit_code": 0,
+      "detail": "valid"
+    },
+    {
+      "file": "AuGenda/Info.plist",
+      "method": "plutil -lint",
+      "exit_code": 0,
+      "detail": "valid"
+    },
+    {
+      "file": "AuGenda/PrivacyInfo.xcprivacy",
+      "method": "plutil -lint",
+      "exit_code": 0,
+      "detail": "valid"
+    },
+    {
+      "file": "AuGenda.xcodeproj/project.pbxproj",
+      "method": "plutil -lint",
+      "exit_code": 0,
+      "detail": "valid"
+    },
+    {
+      "file": "AuGenda.xctestplan",
+      "method": "JSON decode",
+      "exit_code": 0
+    },
+    {
+      "file": "AuGendaWatch Watch App/Assets.xcassets/AccentColor.colorset/Contents.json",
+      "method": "JSON decode",
+      "exit_code": 0
+    },
+    {
+      "file": "AuGendaWatch Watch App/Assets.xcassets/AppIcon.appiconset/Contents.json",
+      "method": "JSON decode",
+      "exit_code": 0
+    },
+    {
+      "file": "AuGendaWatch Watch App/Assets.xcassets/Contents.json",
+      "method": "JSON decode",
+      "exit_code": 0
+    },
+    {
+      "file": "AuGendaWatch Watch App/AuGendaWatch.entitlements",
+      "method": "plutil -lint",
+      "exit_code": 0,
+      "detail": "valid"
+    },
+    {
+      "file": "AuGendaWatch Watch App/PrivacyInfo.xcprivacy",
+      "method": "plutil -lint",
+      "exit_code": 0,
+      "detail": "valid"
+    },
+    {
+      "file": "AuGendaWatchWidgets/Assets.xcassets/AccentColor.colorset/Contents.json",
+      "method": "JSON decode",
+      "exit_code": 0
+    },
+    {
+      "file": "AuGendaWatchWidgets/Assets.xcassets/Contents.json",
+      "method": "JSON decode",
+      "exit_code": 0
+    },
+    {
+      "file": "AuGendaWatchWidgets/Assets.xcassets/WidgetBackground.colorset/Contents.json",
+      "method": "JSON decode",
+      "exit_code": 0
+    },
+    {
+      "file": "AuGendaWatchWidgets/AuGendaWatchWidgets.entitlements",
+      "method": "plutil -lint",
+      "exit_code": 0,
+      "detail": "valid"
+    },
+    {
+      "file": "AuGendaWatchWidgets/Info.plist",
+      "method": "plutil -lint",
+      "exit_code": 0,
+      "detail": "valid"
+    },
+    {
+      "file": "AuGendaWatchWidgets/PrivacyInfo.xcprivacy",
+      "method": "plutil -lint",
+      "exit_code": 0,
+      "detail": "valid"
+    },
+    {
+      "file": "AuGenda/Scripts/validate-oauth.sh",
+      "method": "bash -n",
+      "exit_code": 0
+    }
+  ],
+  "packages": [
+    {
+      "kind": "iOS",
+      "path": "/Users/arthur/Development/AuGenda/local-artifacts/ensdev-audit-2026-10-07/verification/derived-ios/Build/Products/Release-iphoneos/AuGenda.app",
+      "bundle_id": "ensdev.AuGenda",
+      "min_os": "26.5",
+      "unsigned_uncompressed_bytes": 23478916,
+      "unexpected_document_script_font_files": [],
+      "oauth_client_placeholder": true,
+      "google_scheme": "YOUR_CLIENT_ID_REVERSED"
+    },
+    {
+      "kind": "Watch",
+      "path": "/Users/arthur/Development/AuGenda/local-artifacts/ensdev-audit-2026-10-07/verification/derived-watch/Build/Products/Release-watchos/AuGendaWatch Watch App.app",
+      "bundle_id": "ensdev.AuGenda.watchkitapp",
+      "min_os": "26.5",
+      "unsigned_uncompressed_bytes": 6454517,
+      "unexpected_document_script_font_files": [],
+      "oauth_client_placeholder": false,
+      "google_scheme": null
+    }
+  ],
+  "app_coverage": {
+    "coveredLines": 9521,
+    "executableLines": 43841,
+    "lineCoverage": 0.21717114116922515
+  },
+  "coverage_floor_7_percent_passed": true,
+  "limit": "Unsigned uncompressed product bytes do not establish signed archive, App Store download/install size, entitlements, or runtime privacy."
+}

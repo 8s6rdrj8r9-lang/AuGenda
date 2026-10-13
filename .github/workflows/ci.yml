@@ -1,0 +1,211 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Build, test, and package
+    runs-on: macos-26
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Select an Xcode with the required SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          for xcode in \
+            /Applications/Xcode_26.6.app \
+            /Applications/Xcode_26.5.app \
+            /Applications/Xcode.app
+          do
+            if [[ -d "$xcode" ]]; then
+              sdk_version="$(
+                DEVELOPER_DIR="$xcode/Contents/Developer" \
+                  /usr/bin/xcrun --sdk iphoneos --show-sdk-version
+              )"
+              if [[ "$sdk_version" == 26.5 || "$sdk_version" == 26.6* ]]; then
+                echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
+                exit 0
+              fi
+            fi
+          done
+          echo "No installed Xcode provides the iOS 26.5 SDK required by this project." >&2
+          exit 1
+
+      - name: Validate repository and metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git show --check --format= HEAD
+          if git ls-files | grep -q '/xcuserdata/'; then
+            echo "User-specific Xcode data must not be tracked." >&2
+            exit 1
+          fi
+          if git ls-files | grep -Eq '^(audit-report(-v[0-9]+)?|resonator-.*)\.md$'; then
+            echo "Root-level audit scratch or unrelated product artifacts must not be tracked." >&2
+            exit 1
+          fi
+          while IFS= read -r file; do
+            plutil -lint "$file"
+          done < <(
+            find AuGenda "AuGendaWatch Watch App" AuGendaWatchWidgets \
+              -type f \( -name '*.plist' -o -name '*.entitlements' -o -name '*.xcprivacy' \) \
+              -print
+          )
+          while IFS= read -r file; do
+            plutil -lint "$file"
+          done < <(
+            find AuGenda "AuGendaWatch Watch App" AuGendaWatchWidgets \
+              -type f -name 'Contents.json' -print
+          )
+          plutil -lint AuGenda.xcodeproj/project.pbxproj
+
+      - name: Run macOS unit tests with coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project AuGenda.xcodeproj \
+            -scheme AuGenda \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/AuGenda-mac" \
+            -resultBundlePath "$RUNNER_TEMP/AuGendaTests.xcresult" \
+            -enableCodeCoverage YES \
+            -only-testing:AuGendaTests \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            test
+
+      - name: Enforce coverage floor
+        shell: bash
+        run: |
+          set -euo pipefail
+          coverage="$(
+            xcrun xccov view \
+              --report \
+              --json \
+              "$RUNNER_TEMP/AuGendaTests.xcresult" |
+              jq -er '.targets[] | select(.name == "AuGenda.app") | .lineCoverage'
+          )"
+          awk -v coverage="$coverage" 'BEGIN {
+            if (coverage < 0.07) {
+              printf "AuGenda line coverage %.2f%% is below the 7%% floor.\n", coverage * 100
+              exit 1
+            }
+            printf "AuGenda line coverage: %.2f%%\n", coverage * 100
+          }'
+
+      - name: Run iOS onboarding UI smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          simulator_id="$(
+            xcrun simctl list devices available --json |
+              jq -er '
+                [
+                  .devices[][]
+                  | select(.name | startswith("iPhone"))
+                ][0].udid
+              '
+          )"
+          trap 'xcrun simctl shutdown "$simulator_id" >/dev/null 2>&1 || true' EXIT
+          xcrun simctl boot "$simulator_id" >/dev/null 2>&1 || true
+          xcrun simctl bootstatus "$simulator_id" -b
+          xcodebuild \
+            -project AuGenda.xcodeproj \
+            -scheme AuGenda \
+            -destination "platform=iOS Simulator,id=$simulator_id" \
+            -derivedDataPath "$RUNNER_TEMP/AuGenda-iOS-UI" \
+            -resultBundlePath "$RUNNER_TEMP/AuGenda-iOS-UI.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:AuGendaUITests/AuGendaUITests/testCleanLaunchShowsCapacityChoice \
+            test
+
+      - name: Build release app for iOS
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project AuGenda.xcodeproj \
+            -scheme AuGenda \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/AuGenda-iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Build Watch app, tests, and widgets
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project AuGenda.xcodeproj \
+            -scheme 'AuGendaWatch Watch App' \
+            -configuration Release \
+            -destination 'generic/platform=watchOS' \
+            -derivedDataPath "$RUNNER_TEMP/AuGenda-watch" \
+            CODE_SIGNING_ALLOWED=NO \
+            ENABLE_TESTABILITY=YES \
+            build-for-testing
+
+      - name: Run Watch unit and launch UI smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          simulator_id="$(
+            xcrun simctl list devices available --json |
+              jq -er '
+                [
+                  .devices[][]
+                  | select(.name | startswith("Apple Watch"))
+                ][0].udid
+              '
+          )"
+          trap 'xcrun simctl shutdown "$simulator_id" >/dev/null 2>&1 || true' EXIT
+          xcrun simctl boot "$simulator_id" >/dev/null 2>&1 || true
+          xcrun simctl bootstatus "$simulator_id" -b
+          xcodebuild \
+            -project AuGenda.xcodeproj \
+            -scheme 'AuGendaWatch Watch App' \
+            -destination "platform=watchOS Simulator,id=$simulator_id" \
+            -derivedDataPath "$RUNNER_TEMP/AuGenda-watch-tests" \
+            -resultBundlePath "$RUNNER_TEMP/AuGenda-watch-tests.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:'AuGendaWatch Watch AppTests' \
+            -only-testing:'AuGendaWatch Watch AppUITests/AuGendaWatch_Watch_AppUITests/testLaunchShowsCaptureSurface' \
+            test
+
+      - name: Reject accidental package contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/AuGenda-iOS/Build/Products/Release-iphoneos/AuGenda.app"
+          test -d "$app"
+          for forbidden in \
+            'AuGenda-Watch-ClaudeCode-Prompt.md' \
+            'README.md' \
+            'validate-oauth.sh' \
+            'AtkinsonHyperlegible-Regular.ttf' \
+            'AtkinsonHyperlegible-Bold.ttf' \
+            'OpenDyslexic-Regular.otf'
+          do
+            if find "$app" -name "$forbidden" -print -quit | grep -q .; then
+              echo "Forbidden file packaged in app: $forbidden" >&2
+              exit 1
+            fi
+          done

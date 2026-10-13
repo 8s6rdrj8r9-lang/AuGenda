@@ -15,14 +15,32 @@ struct InboxView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var profileManager: ActiveProfileManager
 
-    @Query(
-        filter: #Predicate<InboxItem> { $0.stateRaw == "unprocessed" },
-        sort: \InboxItem.createdAt
-    )
-    private var unprocessed: [InboxItem]
+    @Query private var unprocessed: [InboxItem]
 
     @State private var reviewItem: InboxItem? = nil
     @State private var showBrainDump: Bool = false
+
+    @MainActor
+    init(profileID: UUID? = nil) {
+        let targetID = profileID ?? ActiveProfileManager.shared.activeProfile?.clientID
+        let descriptor: FetchDescriptor<InboxItem>
+        if let targetID {
+            descriptor = FetchDescriptor<InboxItem>(
+                predicate: #Predicate<InboxItem> {
+                    $0.stateRaw == "unprocessed" && ($0.assignedToProfileID == nil || $0.assignedToProfileID == targetID)
+                },
+                sortBy: [SortDescriptor(\.createdAt)]
+            )
+        } else {
+            descriptor = FetchDescriptor<InboxItem>(
+                predicate: #Predicate<InboxItem> {
+                    $0.stateRaw == "unprocessed"
+                },
+                sortBy: [SortDescriptor(\.createdAt)]
+            )
+        }
+        _unprocessed = Query(descriptor)
+    }
 
     var body: some View {
         NavigationStack {
@@ -44,6 +62,7 @@ struct InboxView: View {
                                 do {
                                     try modelContext.save()
                                 } catch {
+                                    modelContext.rollback()
                                     ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
                                 }
                             }
@@ -64,7 +83,11 @@ struct InboxView: View {
                                 .font(.caption)
                         }
                     }
+                    #if os(iOS)
                     .listStyle(.insetGrouped)
+                    #else
+                    .listStyle(.inset)
+                    #endif
                 }
             }
             .navigationTitle("Inbox")
@@ -211,6 +234,7 @@ struct InboxItemReviewSheet: View {
     @State private var showDifficultyDetail: Bool = false
 
     @State private var enrichState: ReviewEnrichState = .idle
+    @State private var enrichmentTask: Task<Void, Never>? = nil
 
     @AppStorage("ai.enabled") private var aiEnabled: Bool = false
     @AppStorage("ai.activeProvider") private var activeProviderRaw: String = ""
@@ -225,7 +249,7 @@ struct InboxItemReviewSheet: View {
 
     private var canEnrich: Bool {
         aiEnabled
-            && !activeProviderRaw.isEmpty
+            && AIProvider(rawValue: activeProviderRaw)?.isReleaseEnabled == true
             && showEnrichButtons
             && !title.trimmingCharacters(in: .whitespaces).isEmpty
     }
@@ -267,7 +291,8 @@ struct InboxItemReviewSheet: View {
                 if canEnrich {
                     Section {
                         Button {
-                            Task { await runEnrich() }
+                            enrichmentTask?.cancel()
+                            enrichmentTask = Task { await runEnrich() }
                         } label: {
                             HStack(spacing: 10) {
                                 switch enrichState {
@@ -313,8 +338,8 @@ struct InboxItemReviewSheet: View {
                             inlineSlider(
                                 label: "Friction",
                                 value: $frictionLevel,
-                                range: 1...5,
-                                hint: "How hard is starting? 1 = easy, 5 = wall"
+                                range: TaskFieldDomain.friction,
+                                hint: "How hard is starting? 1 = easy, 4 = wall"
                             )
                             inlineSlider(
                                 label: "Energy",
@@ -372,6 +397,17 @@ struct InboxItemReviewSheet: View {
             }
         }
         .onAppear { hydrate() }
+        .onChange(of: aiEnabled) { _, isEnabled in
+            if !isEnabled {
+                enrichmentTask?.cancel()
+                enrichmentTask = nil
+                enrichState = .idle
+            }
+        }
+        .onDisappear {
+            enrichmentTask?.cancel()
+            enrichmentTask = nil
+        }
     }
 
     // MARK: - Helpers
@@ -440,10 +476,24 @@ struct InboxItemReviewSheet: View {
         modelContext.insert(task)
         item.state = .organized
         item.resolvedTaskID = task.clientID
+
+        if item.hasAISuggestions {
+            let providerName = activeProviderRaw.isEmpty ? "ai" : activeProviderRaw
+            let provenanceNote = Note(
+                title: "AI Enrichment",
+                body: "Provider: \(providerName)\nPrompt Revision: v\(AIConsentPolicy.currentDisclosureVersion)\nApplied: \(Date.now.formatted(date: .abbreviated, time: .shortened))",
+                relatedTaskID: task.clientID
+            )
+            provenanceNote.tags = "ai-provenance"
+            modelContext.insert(provenanceNote)
+        }
+
         do {
             try modelContext.save()
         } catch {
+            modelContext.rollback()
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            return
         }
         dismiss()
     }
@@ -453,16 +503,19 @@ struct InboxItemReviewSheet: View {
         do {
             try modelContext.save()
         } catch {
+            modelContext.rollback()
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            return
         }
         dismiss()
     }
 
     // MARK: - AI enrichment
 
+    @MainActor
     private func runEnrich() async {
-        guard AIUsageLedger.shared.canEnrich() else {
-            ErrorBannerController.shared.show("AI enrichment paused — monthly budget reached")
+        if let reason = AIUsageLedger.shared.enrichmentPauseReason {
+            ErrorBannerController.shared.show(reason)
             return
         }
         guard let provider = AIProvider(rawValue: activeProviderRaw),
@@ -473,7 +526,7 @@ struct InboxItemReviewSheet: View {
         }
 
         let neurotypes = profileManager.activeProfile?.neurotypes.map(\.rawValue) ?? []
-        let personalization = await MainActor.run { PersonalizationStore.shared.snapshot() }
+        let personalization = PersonalizationStore.shared.snapshot()
 
         let context = EnrichmentContext(
             rawTitle: item.rawCapture.trimmingCharacters(in: .whitespaces),
@@ -484,43 +537,52 @@ struct InboxItemReviewSheet: View {
         )
 
         enrichState = .running
+        defer { enrichmentTask = nil }
         do {
             let result = try await enricher.enrich(context: context)
-            await MainActor.run {
-                applyEnrichment(result)
-                AIUsageLedger.shared.record(result)
+            try Task.checkCancellation()
+            // Fix F-004: Immediately debit/record usage upon receiving response
+            AIUsageLedger.shared.record(result)
+            let draft = InboxEnrichmentDraft(
+                enrichment: result,
+                title: title,
+                friction: frictionLevel,
+                energy: energyRequired,
+                initiationCost: initiationCost,
+                sensoryLoad: sensoryLoad,
+                socialLoad: socialLoad,
+                contextTag: contextTag
+            )
+            let committed = try AIEnrichmentMutation.cache(
+                result,
+                on: item,
+                draft: draft,
+                in: modelContext
+            )
+            applyDraft(committed.draft)
+            if let warning = committed.postCommit.userFacingWarning {
+                ErrorBannerController.shared.show(warning)
             }
             enrichState = .done(summary: "Difficulty: \(previewBand.label) · review below.")
+        } catch is CancellationError {
+            enrichState = .idle
         } catch let error as AIEnricherError {
             enrichState = .failed(message: error.errorDescription ?? "Failed")
         } catch {
-            enrichState = .failed(message: "Unexpected error.")
+            let message = "Couldn't save AI suggestions: \(error.localizedDescription)"
+            enrichState = .failed(message: message)
+            ErrorBannerController.shared.show(message)
         }
     }
 
-    private func applyEnrichment(_ e: TaskEnrichment) {
-        if let v = e.title, !v.isEmpty  { title          = v }
-        if let v = e.friction           { frictionLevel   = v }
-        if let v = e.energy             { energyRequired  = v }
-        if let v = e.sensoryLoad        { sensoryLoad     = v }
-        if let v = e.socialLoad         { socialLoad      = v }
-        if let v = e.initiationCost     { initiationCost  = v }
-        if let v = e.contextTag, !v.isEmpty { contextTag  = v }
-
-        // Cache suggestions on the item so they survive sheet re-entry.
-        item.aiSuggestedTitle          = title
-        item.aiSuggestedFriction       = frictionLevel
-        item.aiSuggestedEnergy         = energyRequired
-        item.aiSuggestedInitiationCost = initiationCost
-        item.aiSuggestedSensoryLoad    = sensoryLoad
-        item.aiSuggestedSocialLoad     = socialLoad
-        item.aiSuggestedContextTag     = contextTag.isEmpty ? nil : contextTag
-        do {
-            try modelContext.save()
-        } catch {
-            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
-        }
-
+    private func applyDraft(_ draft: InboxEnrichmentDraft) {
+        title = draft.title
+        frictionLevel = draft.friction
+        energyRequired = draft.energy
+        initiationCost = draft.initiationCost
+        sensoryLoad = draft.sensoryLoad
+        socialLoad = draft.socialLoad
+        contextTag = draft.contextTag
         // Show the difficulty section so the user sees what was suggested.
         showDifficultyDetail = true
     }

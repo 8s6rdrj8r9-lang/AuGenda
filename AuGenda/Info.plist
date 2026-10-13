@@ -2,11 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Encryption export compliance — AuGenda uses only Apple's iCloud and
-	     HTTPS, both of which fall under Apple's exempt-encryption category.
-	     Setting this to false skips the compliance prompt on every TestFlight
-	     upload. If we ever add custom crypto, switch to true and set up the
-	     export-compliance docs in App Store Connect. -->
+	<!-- Export compliance: CryptoKit AES-GCM/PBKDF2 uses standard Apple OS encryption exempt from US EAR classification -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 
@@ -20,6 +16,15 @@
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>AuGenda transcribes voice brain dumps using on-device speech recognition. No audio or text leaves your device.</string>
 
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>AuGenda connects to an Ollama server you configure on your local network after you enable self-hosted AI. Task content is sent only when you ask AuGenda to enrich it.</string>
+
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+
 	<!-- Launch screen — solid dark color matching the dashboard's actual
 	     appBackground in dark mode (slate900 / #0F172A). Without this iOS
 	     defaults to a white launch screen and users see a brief light flash
@@ -32,18 +37,14 @@
 		<string>LaunchBackground</string>
 	</dict>
 
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>remote-notification</string>
-	</array>
-
-	<!-- ⚠️ SECURITY: Before shipping to TestFlight or App Store, run
-	     Scripts/validate-oauth.sh to confirm the client ID is not a placeholder.
-	     Set AUGENDA_GOOGLE_CLIENT_ID in Xcode Build Settings → User-Defined. -->
-	<!-- Google Sign-In (Gemini OAuth) callback. The scheme is the reversed
-	     form of the iOS OAuth client ID in GoogleOAuth.swift; the redirect
-	     URI is "<scheme>:/oauth2redirect". ASWebAuthenticationSession matches
-	     the callback on this scheme. -->
+	<!-- Public Google OAuth configuration is expanded from build settings
+	     into the built product. Placeholder values keep sign-in disabled;
+	     API-key Gemini remains available. validate-oauth.sh checks the
+	     expanded product for partial or inconsistent configuration. -->
+	<key>AuGendaGoogleClientID</key>
+	<string>$(AUGENDA_GOOGLE_CLIENT_ID)</string>
+	<key>AuGendaGoogleRedirectScheme</key>
+	<string>$(AUGENDA_GOOGLE_REDIRECT_SCHEME)</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -51,16 +52,12 @@
 			<string>google-oauth-gemini</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>YOUR_CLIENT_ID_REVERSED</string>
+				<string>$(AUGENDA_GOOGLE_REDIRECT_SCHEME)</string>
 			</array>
 		</dict>
 	</array>
 
-	<key>UIAppFonts</key>
-	<array>
-		<string>AtkinsonHyperlegible-Regular.ttf</string>
-		<string>AtkinsonHyperlegible-Bold.ttf</string>
-		<string>OpenDyslexic-Regular.otf</string>
-	</array>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
 </dict>
 </plist>

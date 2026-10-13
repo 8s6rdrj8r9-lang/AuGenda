@@ -2,28 +2,14 @@
 // AUDHD Agenda App
 
 import Foundation
+import CoreData
+import OSLog
 import SwiftData
 
-/// CloudKit container identifier.
-///
-/// 🚨 TESTFLIGHT BLOCKER — REPLACE BEFORE FIRST UPLOAD 🚨
-///
-/// The literal below is a placeholder. To ship to TestFlight you MUST:
-///   1. In Apple Developer Portal → Identifiers → iCloud Containers, create a
-///      container named exactly `iCloud.<your-team-prefix>.AuGenda` (your team
-///      prefix is the reverse-DNS your bundle IDs already use — the existing
-///      watch target signed as `ensdev.AuGenda.watchkitapp`, so this would
-///      typically be `iCloud.ensdev.AuGenda`).
-///   2. Update this literal AND the matching entry in every entitlements file
-///      under `iCloud.com.apple.developer.icloud-container-identifiers`:
-///        - `AuGenda/AuGenda.entitlements`
-///        - watch entitlements file (once capabilities are configured)
-///        - widget entitlements file (once capabilities are configured)
-///   3. Verify in App Store Connect that the iOS app + watch app bundle IDs
-///      both have the iCloud capability turned on and that container linked.
-///
-/// Until this is real, CloudKit sync silently fails on device installs.
-private let cloudKitContainerID = "iCloud.com.augenda.AuGenda"   // ⚠️ placeholder
+private let persistenceLogger = Logger(
+    subsystem: "com.augenda.AuGenda",
+    category: "PersistenceStartup"
+)
 
 // MARK: - Schema Versioning
 
@@ -63,6 +49,32 @@ enum AuGendaMigrationPlan: SchemaMigrationPlan {
     )
 }
 
+/// The production startup boundary is explicit so a failed persistent store
+/// can never be mistaken for an empty, writable account.
+enum PersistenceStartupState {
+    case ready(ModelContainer)
+    case failed(PersistenceStartupFailure)
+
+    var isReady: Bool {
+        if case .ready = self { return true }
+        return false
+    }
+}
+
+struct PersistenceStartupFailure: Error, Identifiable {
+    let diagnosticCode: String
+
+    var id: String { diagnosticCode }
+
+    var supportSummary: String {
+        """
+        AuGenda could not open its local data store.
+        Diagnostic code: \(diagnosticCode)
+        Store class: application-local
+        """
+    }
+}
+
 enum AppContainer {
 
     /// Shared schema — keep in sync across every container variant below.
@@ -70,51 +82,96 @@ enum AppContainer {
         AuGendaSchemaV2.models
     }
 
-    /// Production container — file-backed + CloudKit private database.
-    /// Use this once the real CloudKit container ID is wired in (see the
-    /// big comment block on `cloudKitContainerID` above).
-    static var production: ModelContainer = {
+    /// Build the app's file-backed local store. Failure is returned to the
+    /// launch UI; production must never substitute an in-memory container.
+    @MainActor
+    static func makePersistentLocalStartupState() -> PersistenceStartupState {
+        startupState(using: makePersistentLocalContainer)
+    }
+
+    /// Injection seam used by persistence-startup tests. Keeping failure
+    /// conversion here also ensures logs contain only an opaque diagnostic
+    /// code and store class, never a path or user-controlled content.
+    @MainActor
+    static func startupState(
+        using factory: () throws -> ModelContainer
+    ) -> PersistenceStartupState {
+        do {
+            return .ready(try factory())
+        } catch {
+            let failure = PersistenceStartupFailure(
+                diagnosticCode: diagnosticCode(for: error)
+            )
+            persistenceLogger.fault(
+                "Persistent store unavailable; code=\(failure.diagnosticCode, privacy: .public) store=application-local"
+            )
+            return .failed(failure)
+        }
+    }
+
+    @MainActor
+    private static func makePersistentLocalContainer() throws -> ModelContainer {
         let schema = Schema(schemaModels)
 
+        #if os(macOS)
+        let support = try FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask,
+            appropriateFor: nil, create: true
+        )
+        let config = ModelConfiguration(
+            schema: schema,
+            url: try macOSStoreURL(applicationSupport: support),
+            cloudKitDatabase: .none
+        )
+        #else
         let config = ModelConfiguration(
             schema: schema,
             isStoredInMemoryOnly: false,
-            cloudKitDatabase: .private(cloudKitContainerID)
+            cloudKitDatabase: .none
         )
+        #endif
 
-        do {
-            return try ModelContainer(for: schema, migrationPlan: AuGendaMigrationPlan.self, configurations: [config])
-        } catch {
-            // CloudKit not active yet — fall back to local dev container
-            return Self.dev
-        }
-    }()
-
-    /// Dev container — file-backed (persistent across launches) but with
-    /// NO CloudKit binding. Use this while the production CloudKit
-    /// container ID is still a placeholder; lets fresh installs actually
-    /// boot empty (so the first-launch flow fires) without depending on
-    /// a CloudKit container that doesn't exist yet.
-    ///
-    /// Flip to `.production` in `AuGendaApp.swift` once CloudKit is real.
-    static var dev: ModelContainer = {
-        let schema = Schema(schemaModels)
-
-        let config = ModelConfiguration(
-            schema: schema,
-            isStoredInMemoryOnly: false
-            // No cloudKitDatabase — local-only.
+        return try ModelContainer(
+            for: schema,
+            migrationPlan: AuGendaMigrationPlan.self,
+            configurations: [config]
         )
+    }
 
-        do {
-            return try ModelContainer(for: schema, migrationPlan: AuGendaMigrationPlan.self, configurations: [config])
-        } catch {
-            // Last resort — fall back to in-memory rather than crashing,
-            // so the app still launches in some form if persistent setup
-            // fails for any reason (corrupt store, schema mismatch, etc.).
-            return Self.makeTestContainer()
+    /// Unsandboxed Mac apps share Application Support. SwiftData's default
+    /// filename can therefore point at another app's database. Inspect only
+    /// metadata before retaining a legacy AuGenda store; never mutate or move
+    /// an unrelated store. Unreadable legacy metadata remains a startup error.
+    static func macOSStoreURL(applicationSupport: URL) throws -> URL {
+        let directory = applicationSupport.appendingPathComponent("ensdev.AuGenda", isDirectory: true)
+        let dedicated = directory.appendingPathComponent("AuGenda.store")
+        let legacy = applicationSupport.appendingPathComponent("default.store")
+        let files = FileManager.default
+
+        if files.fileExists(atPath: dedicated.path) { return dedicated }
+        if files.fileExists(atPath: legacy.path) {
+            let metadata = try NSPersistentStoreCoordinator.metadataForPersistentStore(
+                ofType: NSSQLiteStoreType, at: legacy,
+                options: [NSReadOnlyPersistentStoreOption: true]
+            )
+            guard let hashes = metadata[NSStoreModelVersionHashesKey] as? [String: Data],
+                  !hashes.isEmpty else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            let legacyEntities: Set<String> = [
+                "AgendaItem", "AgendaTask", "InboxItem", "UserPreferences",
+                "Profile", "ProfilePreferences", "Block", "TaskStep"
+            ]
+            if !legacyEntities.isDisjoint(with: hashes.keys) { return legacy }
         }
-    }()
+        try files.createDirectory(at: directory, withIntermediateDirectories: true)
+        return dedicated
+    }
+
+    private static func diagnosticCode(for error: Error) -> String {
+        let code = UInt32(truncatingIfNeeded: (error as NSError).code)
+        return String(format: "AUG-PERSIST-%08X", code)
+    }
 
     static func makeTestContainer() -> ModelContainer {
         let schema = Schema(schemaModels)
@@ -127,8 +184,7 @@ enum AppContainer {
         do {
             return try ModelContainer(for: schema, migrationPlan: AuGendaMigrationPlan.self, configurations: [config])
         } catch {
-            // Last resort — fall back to dev
-            return Self.dev
+            fatalError("Failed to create in-memory model container: \(error)")
         }
     }
 

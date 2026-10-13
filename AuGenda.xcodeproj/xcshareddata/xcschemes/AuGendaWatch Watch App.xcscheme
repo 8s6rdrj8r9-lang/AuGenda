@@ -21,20 +21,6 @@
                ReferencedContainer = "container:AuGenda.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
-         <BuildActionEntry
-            buildForTesting = "YES"
-            buildForRunning = "YES"
-            buildForProfiling = "YES"
-            buildForArchiving = "YES"
-            buildForAnalyzing = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "8EDD1E3B2FC3B0B8008482EC"
-               BuildableName = "AuGenda.app"
-               BlueprintName = "AuGenda"
-               ReferencedContainer = "container:AuGenda.xcodeproj">
-            </BuildableReference>
-         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction

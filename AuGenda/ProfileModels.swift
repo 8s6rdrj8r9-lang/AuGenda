@@ -85,7 +85,6 @@ enum Neurotype: String, Codable, CaseIterable, Identifiable {
             prefs.frictionLabelRaw                  = FrictionLabel.effort.rawValue
 
         case .dyslexia:
-            prefs.appFontRaw                        = AppFont.openDyslexic.rawValue
             prefs.largeTouchTargets                 = true
             prefs.taskLanguageStyleRaw              = TaskLanguageStyle.simple.rawValue
 
@@ -102,47 +101,28 @@ enum Neurotype: String, Codable, CaseIterable, Identifiable {
 
 enum AppFont: String, Codable, CaseIterable, Identifiable {
     case system       = "system"
-    case atkinson     = "atkinson"
-    case openDyslexic = "openDyslexic"
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
         case .system:       return "System (SF Pro)"
-        case .atkinson:     return "Atkinson Hyperlegible"
-        case .openDyslexic: return "OpenDyslexic"
         }
     }
 
     var description: String {
         switch self {
         case .system:       return "Apple's default — optimised for all-round legibility"
-        case .atkinson:     return "Designed for low-vision readers; clear character distinction"
-        case .openDyslexic: return "Weighted bottoms reduce letter confusion"
         }
     }
 
-    /// Resolve a SwiftUI Font for the given text style, honouring dynamic type.
-    /// Requires the font files to be bundled in the app target and listed under
-    /// UIAppFonts in Info.plist:
-    ///   - AtkinsonHyperlegible-Regular.ttf
-    ///   - AtkinsonHyperlegible-Bold.ttf
-    ///   - OpenDyslexic-Regular.otf
+    /// Resolve a SwiftUI Font for the given text style, honouring Dynamic Type.
+    /// Only verified system typography is currently offered. Unsupported
+    /// custom-font choices are not presented and cannot silently fall back.
     func font(for style: Font.TextStyle) -> Font {
         switch self {
         case .system:
             return Font.system(style)
-        case .atkinson:
-            // ⚠️ Font files must be added to the app target in Xcode
-            // (Build Phases → Copy Bundle Resources) and listed in Info.plist
-            // under UIAppFonts for Font.custom to resolve correctly.
-            return Font.custom("AtkinsonHyperlegible-Regular", size: 16, relativeTo: style)
-        case .openDyslexic:
-            // ⚠️ Font files must be added to the app target in Xcode
-            // (Build Phases → Copy Bundle Resources) and listed in Info.plist
-            // under UIAppFonts for Font.custom to resolve correctly.
-            return Font.custom("OpenDyslexic", size: 16, relativeTo: style)
         }
     }
 }
@@ -352,6 +332,14 @@ final class ProfilePreferences {
         set { taskLanguageStyleRaw = newValue.rawValue }
     }
 
+    /// A single validated scale consumed by the root environment. Presets that
+    /// request large targets receive at least 1.25× spacing and controls,
+    /// while malformed persisted values cannot collapse or explode the UI.
+    var effectiveUIScale: Double {
+        let validated = min(max(uiScale, 1.0), 1.5)
+        return max(validated, largeTouchTargets ? 1.25 : 1.0)
+    }
+
     var frictionLabel: FrictionLabel {
         get { FrictionLabel(rawValue: frictionLabelRaw) ?? .friction }
         set { frictionLabelRaw = newValue.rawValue }
@@ -386,7 +374,14 @@ final class ProfilePreferences {
     /// `pinned ?? autoFrom(energy)` by hand. Computed only — no stored
     /// attribute, so the CloudKit-additive schema contract is preserved.
     var effectiveDensity: DensityMode {
-        densityPinned ?? .autoFrom(energyLevel: currentEnergyLevel)
+        let requested = densityPinned ?? .autoFrom(energyLevel: currentEnergyLevel)
+        guard lowStimulationMode else { return requested }
+        switch requested {
+        case .survival, .low:
+            return requested
+        case .functional, .high:
+            return .low
+        }
     }
 
     // MARK: Preset factory
@@ -411,10 +406,43 @@ final class ProfilePreferences {
             .split(separator: ",")
             .compactMap { Neurotype(rawValue: String($0)) }
         guard !neurotypes.isEmpty else { return }
+        restoreBaselineDefaults()
         for neurotype in neurotypes {
             neurotype.apply(to: self)
         }
         updatedAt = .now
+    }
+
+    /// Reset every user-adjustable field before applying a preset. Applying
+    /// only the preset overrides leaves unrelated values from the prior
+    /// configuration in place and makes “Reset” misleading.
+    private func restoreBaselineDefaults() {
+        currentEnergyLevel = 3
+        energyTrackingEnabled = true
+        lowEFMaxFriction = 2
+        densityPinnedRaw = ""
+        focusSessionMinutes = 25
+        breakMinutes = 10
+        hyperfocusGuard = false
+        taskLanguageStyleRaw = TaskLanguageStyle.standard.rawValue
+        frictionLabelRaw = FrictionLabel.friction.rawValue
+        transitionPrepMinutes = 5
+        routineProtectionEnabled = false
+        timeBlindnessWarningsEnabled = false
+        deadlinePressureVisible = true
+        notificationStyleRaw = NotificationStyle.standard.rawValue
+        maxNotificationsPerHour = 3
+        notificationPrivacyStrict = true
+        appFontRaw = AppFont.system.rawValue
+        minimalMode = false
+        largeTouchTargets = false
+        sensoryContextTagsEnabled = false
+        highContrastMode = false
+        showCheckInNudges = true
+        lowStimulationMode = false
+        reduceMotion = false
+        uiScale = 1.0
+        watchComplicationMode = "next-task"
     }
 
     init() {

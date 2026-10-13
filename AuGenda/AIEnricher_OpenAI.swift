@@ -13,7 +13,11 @@ struct OpenAIEnricher: AITaskEnricher {
     private let baseURL = URL(string: "https://api.openai.com/v1")!
 
     func isAvailable() async -> Bool {
-        KeychainStore.hasKey(for: provider)
+        await OpenAICompatibleClient(
+            baseURL: baseURL,
+            model: provider.defaultModel,
+            providerKey: provider
+        ).isAvailable(requiredModel: provider.defaultModel)
     }
 
     func enrich(context: EnrichmentContext) async throws -> TaskEnrichment {

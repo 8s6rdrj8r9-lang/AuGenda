@@ -3,12 +3,11 @@
 //  AuGendaWatch Watch App
 //
 //  Single-screen orientation anchor for AuGenda on the wrist. The watch
-//  app owns its own SwiftData container (Spec §12, §18 — offline-first),
-//  with WatchConnectivity layered on top as live-state garnish.
+//  The phone remains the source of truth; the Watch keeps a lightweight
+//  App Group snapshot plus a durable mutation outbox for offline actions.
 //
 
 import SwiftUI
-import SwiftData
 
 @main
 struct AuGendaWatch_Watch_AppApp: App {
@@ -20,6 +19,5 @@ struct AuGendaWatch_Watch_AppApp: App {
             NowView()
                 .environmentObject(session)
         }
-        .modelContainer(WatchAppContainer.production)
     }
 }

@@ -1,8 +1,13 @@
 # AuGenda — Developer Documentation
 
-**Last updated:** 2026-05-26  
-**Swift:** 5.0 (project setting) running Swift 6 strict concurrency  
-**Project type:** SwiftUI + SwiftData, iOS/macOS dual-target, no external dependencies
+**Last updated:** 2026-09-12
+**Swift:** Swift 5 language mode with staged concurrency settings
+**Project type:** SwiftUI + SwiftData, iOS/iPadOS/macOS app with Watch app and widget targets, no external packages
+
+> **Evidence discipline:** This document describes the current working tree.
+> Product goals belong in `PRD.md`; they are not proof that a feature has
+> shipped or passed release validation. Build, test, accessibility, size, and
+> device claims below are dated and scoped to the command that produced them.
 
 ---
 
@@ -14,13 +19,26 @@
 |---|---|
 | `IPHONEOS_DEPLOYMENT_TARGET` | 26.5 |
 | `MACOSX_DEPLOYMENT_TARGET` | 26.3 |
+| `WATCHOS_DEPLOYMENT_TARGET` | 26.5 |
 | `SWIFT_VERSION` | 5.0 |
-| `TARGETED_DEVICE_FAMILY` | `"1,2,7"` — iPhone (1), iPad (2), Mac-designed-for-iPad (7) |
+| `SWIFT_APPROACHABLE_CONCURRENCY` | `YES` |
+| `SWIFT_DEFAULT_ACTOR_ISOLATION` | `MainActor` on the app and Watch app targets |
+| `TARGETED_DEVICE_FAMILY` | `"1,2"` — iPhone (1), iPad (2); native macOS is selected separately through `SUPPORTED_PLATFORMS` |
 | `SDKROOT` | `auto` — Xcode picks the right SDK per destination |
 | `CODE_SIGN_STYLE` | Automatic |
 | `DEVELOPMENT_TEAM` | `GAB62HZP25` |
 
-The project builds for **native macOS** (not Catalyst). `TARGETED_DEVICE_FAMILY = 7` plus `MACOSX_DEPLOYMENT_TARGET` together enable "Designed for iPad" on Mac. The codebase also contains fully-native macOS-specific SwiftUI branches (`#if os(iOS)`) throughout, so it's being actively developed as a dual-target app.
+These are the configured minimums, not the broader compatibility goals in the
+PRD. The main target has iPhone, iPad, and macOS destinations and contains
+platform-specific SwiftUI branches. The Watch app and Watch widget are native
+watchOS targets.
+
+The project is **not** in Swift 6 language mode and does not set
+`SWIFT_STRICT_CONCURRENCY = complete`. It uses Swift 5 language mode plus
+approachable-concurrency, default-main-actor, and member-import-visibility
+settings as staged migration aids. Code should still respect actor isolation,
+but documentation and reviews must not describe this as verified Swift 6 strict
+concurrency.
 
 ### 1.2 Bundle identifiers and targets
 
@@ -29,8 +47,13 @@ The project builds for **native macOS** (not Catalyst). `TARGETED_DEVICE_FAMILY 
 | AuGenda | `ensdev.AuGenda` | Application |
 | AuGendaTests | `ensdev.AuGendaTests` | Unit test bundle |
 | AuGendaUITests | `ensdev.AuGendaUITests` | UI test bundle |
+| AuGendaWatch Watch App | `ensdev.AuGenda.watchkitapp` | watchOS application |
+| AuGendaWatch Watch AppTests | `ensdev.AuGendaWatch-Watch-AppTests` | Watch unit test bundle |
+| AuGendaWatch Watch AppUITests | `ensdev.AuGendaWatch-Watch-AppUITests` | Watch UI test bundle |
+| AuGendaWatchWidgetsExtension | `ensdev.AuGenda.watchkitapp.AuGendaWatchWidgets` | watchOS widget extension |
 
-No watchOS target exists yet. `WatchConnectivity` is conditionally imported (`#if canImport(WatchConnectivity)`) throughout so a Watch extension can be added later without changing the existing source.
+There are seven native targets. Target existence and compilation are not
+equivalent to paired-device or App Store validation; see §4.7.
 
 ### 1.3 External dependencies
 
@@ -47,39 +70,38 @@ No watchOS target exists yet. `WatchConnectivity` is conditionally imported (`#i
 | `CoreLocation` | `BlockView.swift` → `BlockManager` |
 | `Contacts` + `ContactsUI` | `ProfileViews.swift` — avatar picker |
 | `UIKit` | `ProfileViews.swift`, `TaskDetailView.swift` — iOS-specific UI |
-| `CloudKit` | Declared in entitlements; routed through SwiftData's `ModelConfiguration` |
+| `WidgetKit` | Watch widget and Watch-side timeline reloads |
 
-**Font files** — referenced in code but need to be added to the bundle and `UIAppFonts` in Info.plist if you activate non-system fonts:
-
-- `AtkinsonHyperlegible-Regular.ttf`
-- `AtkinsonHyperlegible-Bold.ttf`
-- `OpenDyslexic-Regular.otf`
-
-These are referenced in `ProfileModels.swift` `AppFont.font(for:)`. If the files are missing, `Font.custom(...)` silently falls back to system font — no crash, but the user's dyslexia/legibility font choice is silently ignored.
+**Typography:** the current app intentionally exposes only Apple system
+typography. `AppFont` has one `.system` case, typography tokens use semantic
+SwiftUI text styles, `Info.plist` has no `UIAppFonts`, and the former invalid
+font artifacts were removed. Custom dyslexia-font choices remain a product
+requirement, not a current capability. Any reintroduction must include
+authoritative font binaries and licenses, verified PostScript names, bundle
+registration, and Dynamic Type/device testing.
 
 ### 1.4 Capabilities and entitlements
 
-**File:** `AuGenda/AuGenda.entitlements`
+Applied entitlement files in the working tree:
 
-```xml
-aps-environment: development
-com.apple.developer.aps-environment: development
-com.apple.developer.icloud-container-identifiers: [] ← EMPTY — must be filled in
-com.apple.developer.icloud-services: [CloudKit]
-```
+- `AuGenda/AuGenda.entitlements`: WeatherKit only. Push and CloudKit
+  entitlements are deliberately absent because notifications are local and the
+  main SwiftData store is local-only.
+- `AuGendaWatch Watch App/AuGendaWatch.entitlements` and
+  `AuGendaWatchWidgets/AuGendaWatchWidgets.entitlements`: the shared App Group
+  `group.ensdev.AuGenda.watch`.
+- The Xcode build settings point the corresponding targets at those files.
 
-**Missing entitlements that need to be added before production:**
-- `com.apple.developer.weatherkit: true` — required for `WeatherKit` API calls in `BlockManager`
-- `com.apple.developer.icloud-container-identifiers` must contain the actual container ID
+The main `Info.plist` contains location, microphone, speech-recognition, and
+local-network usage descriptions, plus a local-network ATS exception for an
+explicitly configured Ollama host. Google OAuth values are build-setting
+placeholders until valid credentials are supplied.
 
-**`Info.plist` background modes:**
-```xml
-UIBackgroundModes: [remote-notification]
-```
-
-**Missing privacy strings** — `BlockManager` requests location at `kCLLocationAccuracyKilometer` and calls WeatherKit. These usage description strings must be added to Info.plist (or as `INFOPLIST_KEY_*` build settings) or the app will crash on first location request:
-- `NSLocationWhenInUseUsageDescription`
-- `NSWeatherKitClientIdentifier` (if using server-side WeatherKit; not needed for `WeatherService.shared` on-device)
+Repository configuration is not provisioning evidence. Before release, verify
+that WeatherKit and the Watch App Group are enabled for the exact App IDs and
+signing profiles, then inspect the signed archive entitlements. Also reconcile
+each privacy manifest with actual runtime behavior and the App Store privacy
+questionnaire.
 
 ### 1.5 Terminal build commands
 
@@ -87,57 +109,72 @@ UIBackgroundModes: [remote-notification]
 # List available simulators
 xcrun simctl list devices available
 
-# Build for iOS Simulator (clean)
-xcodebuild clean build \
+# Build the main scheme for an available iOS Simulator
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+xcodebuild build \
   -project AuGenda.xcodeproj \
   -scheme AuGenda \
-  -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
-  | xcbeautify
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 
-# Run on simulator
+# Run main unit tests
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 xcodebuild test \
   -project AuGenda.xcodeproj \
-  -scheme AuGendaTests \
-  -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
+  -scheme AuGenda \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -only-testing:AuGendaTests
 
 # Build for macOS
-xcodebuild clean build \
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+xcodebuild build \
   -project AuGenda.xcodeproj \
   -scheme AuGenda \
   -destination 'platform=macOS'
+
+# Build the Watch scheme using a destination available on the host
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+xcodebuild build \
+  -project AuGenda.xcodeproj \
+  -scheme 'AuGendaWatch Watch App' \
+  -destination '<paired or simulator Watch destination>'
 ```
 
-### 1.6 CloudKit — production not yet active
+### 1.6 Persistence — file-backed and local-only
 
-`AuGendaApp.swift` line 26:
-```swift
-.modelContainer(AppContainer.preview)   // ← in-memory; wipes on every launch
-// .modelContainer(AppContainer.production)  ← uncomment when CloudKit is ready
-```
+Production startup calls
+`AppContainer.makePersistentLocalStartupState()`. The resulting
+`ModelConfiguration` is file-backed (`isStoredInMemoryOnly: false`) and has no
+`cloudKitDatabase`. A persistent-store open failure produces a read-only
+recovery surface; production does not substitute an empty in-memory store.
 
-`AppContainer.swift` line 7:
-```swift
-private let cloudKitContainerID = "iCloud.com.yourname.audhd-agenda"  // ← PLACEHOLDER
-```
+`AppContainer.preview` and `AppContainer.makeTestContainer()` remain
+in-memory-only for previews and tests. The `-ui-testing` launch argument also
+selects the test container.
 
-**Both must be changed before shipping.** The container ID needs to match what's provisioned in App Store Connect → CloudKit Console → Containers.
+CloudKit is a future product direction only. It is not configured in the
+production container or main-app entitlements, and the current data model must
+not be documented as multi-device synced.
 
 ---
 
 ## 2. ARCHITECTURE & PATTERNS
 
-### 2.1 SwiftData schema — all 13 models
+### 2.1 SwiftData schema — 17 current models
 
-All models are CloudKit-compatible by design: every property has a default value or is optional, enums are stored as raw `String`, and arrays are stored as comma-separated strings instead of relationships where CloudKit has relational limits.
+The production local store uses `AuGendaSchemaV2` and
+`AuGendaMigrationPlan`. Several models retain CloudKit-compatible shapes as a
+future-facing design constraint, but the current store is not connected to
+CloudKit.
 
 **Scheduling domain:**
 
 | Model | File | Key fields |
 |---|---|---|
-| `AgendaItem` | `AgendaItem.swift` | `title`, `scheduledDate`, `frictionLevel` (1–5), `energyRequired` (1–4), `contextTag`, `snoozedUntil`, `recurrenceRule` ("none"/"daily"/"weekly"/"weekdays"), `priority` (0/1/2), `assignedToProfileID`, `assignedByProfileID` |
+| `AgendaItem` | `AgendaItem.swift` | `title`, `scheduledDate`, `frictionLevel` (1–4), `energyRequired` (1–4), `contextTag`, `snoozedUntil`, `recurrenceRule`, `priority` (0/1/2), `assignedToProfileID`, `assignedByProfileID` |
 | `SubTask` | `AgendaItem.swift` | `title`, `isComplete`, `sortOrder`; `@Relationship(deleteRule: .cascade, inverse: \SubTask.parentItem)` from `AgendaItem` |
 | `AgendaTask` | `AgendaTask.swift` | Like `AgendaItem` but no `scheduledDate` — lives in backlog. Adds `interestLevel`, `estimatedMinutes`, `waitingOn`, `isAbandoned`, `hyperfocusRisk`. Has `ndPriorityScore` computed property. |
 | `TaskStep` | `AgendaTask.swift` | Subtask of `AgendaTask`; adds `estimatedMinutes` |
+| `InboxItem` | `InboxItem.swift` | Low-friction unscheduled capture from text or voice brain dumps |
 
 **Block domain:**
 
@@ -157,7 +194,15 @@ All models are CloudKit-compatible by design: every property has a default value
 | `Profile` | `ProfileModels.swift` | `name`, `roleRaw` → `ProfileRole`, `neurotypesRaw` (comma-sep `Neurotype`), `avatarImageData` (PNG/JPEG), `avatarColorHex` |
 | `ProfilePreferences` | `ProfileModels.swift` | 20+ per-profile settings: `currentEnergyLevel`, `hyperfocusGuard`, `taskLanguageStyleRaw`, `notificationStyleRaw`, `appFontRaw`, etc. |
 
-**Legacy:**
+**Focus, relationship, and note domains:**
+
+| Model | File | Key fields |
+|---|---|---|
+| `FocusSession` | `FocusSession.swift` | Durable session state, planned/end time, linked task, interruption history |
+| `TaskRelationship` | `TaskRelationship.swift` | Directed relationship between task UUIDs with validated relationship type |
+| `Note` | `Note.swift` | Standalone note content with optional task/item references |
+
+**Legacy model retained in the schema:**
 
 | Model | File | Notes |
 |---|---|---|
@@ -200,8 +245,13 @@ The app uses **flat SwiftUI patterns only** — no separate ViewModel types.
 **@Environment(\.modelContext)** — used in views that write data:
 ```swift
 @Environment(\.modelContext) private var modelContext
-// ... 
-try? modelContext.save()
+// ...
+do {
+    try modelContext.save()
+} catch {
+    modelContext.rollback()
+    ErrorBannerController.shared.show("Could not save changes.")
+}
 ```
 
 **Why no MVVM:** SwiftData's `@Query` macro gives reactive data fetching at the view layer for free. Adding ViewModels between the view and SwiftData would be extra indirection with no gain for this codebase size.
@@ -222,9 +272,10 @@ This is because singletons are created before the SwiftData container is ready. 
 | `NotificationManager` | `NotificationManager.swift` | Schedule/cancel `UNUserNotificationCenter` alerts; manage focus session state (`focusSessionActive`, `focusSessionEndsAt`); handle notification action taps |
 | `BlockManager` | `BlockView.swift` | Activate/complete blocks; fetch `WeatherService.shared` suggestions for outdoor blocks; prompt auto-bundles; `CLLocationManager` delegate |
 | `ActiveProfileManager` | `ProfileModels.swift` | Track which `Profile` is active; persist selection across launches in `UserDefaults` key `"activeProfileID"`; expose `activePreferences: ProfilePreferences?` |
-| `WatchConnectivityManager` | `WatchConnectivityManager.swift` | Bidirectional iPhone ↔ Watch sync; encode `WatchSyncPayload`; route Watch actions (complete, snooze, energy update) back to SwiftData |
+| `WatchConnectivityManager` | `WatchConnectivityManager.swift` | Build versioned full snapshots; validate and idempotently apply Watch mutation envelopes; acknowledge outcomes |
 
-All four managers use the **Swift 6 `@MainActor` + `ObservableObject`** pattern:
+The managers use an **actor-isolated `ObservableObject`** pattern while the
+project remains in Swift 5 language mode:
 ```swift
 @MainActor
 final class SomeManager: NSObject, ObservableObject {
@@ -232,7 +283,9 @@ final class SomeManager: NSObject, ObservableObject {
     // ...
 }
 ```
-The `nonisolated let objectWillChange` declaration is required because `ObservableObject`'s synthesized `objectWillChange` is `@MainActor`-isolated, but delegate callbacks (e.g. `WCSessionDelegate`, `CLLocationManagerDelegate`) arrive on non-main threads and need to call `objectWillChange.send()` from non-isolated contexts.
+The explicit `nonisolated objectWillChange` accommodates delegate callbacks
+that arrive outside the main actor. Delegate work that mutates UI-observable or
+SwiftData state must hop to `@MainActor`.
 
 ### 2.5 View hierarchy
 
@@ -258,32 +311,41 @@ Navigation is **tab-based on iOS** (bottom `TabBar`) and **sidebar on macOS** (l
 ### 2.6 WatchConnectivity data flow
 
 ```
-iPhone app (source of truth)
+iPhone app (durable source of truth)
   │
-  ├── sendSyncSnapshot()               triggered on: scene active/background, task complete, snooze, energy change
-  │    ├── if watch reachable → WCSession.sendMessage(_:replyHandler:)
-  │    └── if not reachable   → WCSession.updateApplicationContext(_:)
+  ├── builds a versioned, active-profile-scoped full snapshot
+  ├── updateApplicationContext         durable latest-state delivery
+  ├── sendMessage                      reachable latency optimization
+  └── receives idempotent Watch mutations and returns acknowledgements
   │
-  └── WatchSyncPayload (Codable):
-       nextAgendaItemTitle, nextAgendaItemTime, nextAgendaItemClientID,
-       currentEnergyLevel, focusSessionActive, focusSessionEndsAt,
-       pendingTaskCount, lowFrictionTaskCount
+  └── WatchSnapshot:
+       schemaVersion, snapshotID, generatedAt, profileID,
+       agendaItems, backlogTasks, energy/density, focus state,
+       pending/low-friction counts, pendingRecovery
 
-Watch app (display only)
+Watch app
   │
-  └── sends back:
-       WCMessageType.taskCompleted    → marks AgendaItem.isComplete = true
-       WCMessageType.taskSnoozed      → sets AgendaItem.snoozedUntil
-       WCMessageType.energyUpdate     → writes ProfilePreferences.currentEnergyLevel
-       WCMessageType.requestSync      → triggers sendSyncSnapshot()
+  ├── validates and stores the newest full snapshot
+  ├── queues complete/snooze/energy/capture mutations in a durable outbox
+  ├── transferUserInfo                durable mutation delivery
+  ├── retries until phone acknowledgement
+  └── writes snapshot + outbox to the Watch App Group
+          │
+          └── Watch widget reads the same presentation snapshot and reloads
 ```
 
-**Key constants** (duplicate these exactly in the Watch Extension target):
-```swift
-// WatchConnectivityManager.swift
-enum WCMessageKey { /* nextTask, energyLevel, focusState, ... */ }
-enum WCMessageType: String { /* syncSnapshot, taskCompleted, ... */ }
-```
+`Shared/WatchSyncContract.swift` is compiled by the phone, Watch app, and Watch
+widget targets. It standardizes the envelope, millisecond date coding, schema
+version, freshness window, and mutation/acknowledgement types.
+`Shared/WatchSharedStateStore.swift` is shared by the Watch app and widget and
+uses `UserDefaults(suiteName: "group.ensdev.AuGenda.watch")`. Pending
+mutations are overlaid on the last snapshot so a completed or snoozed item is
+not re-presented while acknowledgement is pending.
+
+This source-level contract has unit coverage, but the App Group still requires
+matching Developer Portal/App ID/profile provisioning. Paired physical
+iPhone/Watch delivery, offline retry, complication refresh, freshness redaction,
+and profile isolation remain release QA gates.
 
 ### 2.7 Notification system
 
@@ -309,27 +371,34 @@ Four `UNNotificationCategory` identifiers (registered in `NotificationManager.re
 - `.predictable` — advance + at-time only (autism preset; no overdue surprise)
 - `.minimal` — at-time only (PDA preset)
 
-Notification taps post `Notification.Name` events handled in `ContentView`:
-```swift
-Notification.Name.agendaItemCompleted   ← userInfo["clientID"]
-Notification.Name.agendaItemSnoozed     ← userInfo["clientID", "minutes"]
-```
+Agenda reminders resolve privacy and style from the item's assigned owner.
+Unassigned or unavailable owners use redacted previews and minimal reminders.
+Changing the active profile cannot unredact another owner's content. Refresh
+and backup restore rebuild incomplete items using the persisted snooze deadline
+when present; a snooze replaces the original schedule, including for overdue
+items, and an expired snooze does not reinstate that schedule.
 
-### 2.8 RecurrenceEngine
+Notification actions are handled by `NotificationManager`, which resolves the
+target record, persists completion or snooze state, then performs notification
+and Watch-sync side effects. The delegate completion handler runs only after
+that main-actor action path finishes.
 
-`RecurrenceEngine.generateForToday(context:)` is called on app launch. It:
-1. Fetches `AgendaItem` where `recurrenceRule != "none"` and `recurrenceParentID == nil` (templates)
-2. For each template that should fire today, checks whether a generated instance already exists for today (idempotent)
-3. Creates a new `AgendaItem` copy with `recurrenceParentID = template.clientID`
+### 2.8 Completion-driven recurrence
 
-**Supported rules:** `"daily"`, `"weekly"` (same weekday as template), `"weekdays"` (Mon–Fri).  
-**Not yet implemented:** `"monthly"`, `"biweekly"`, `"custom"`. The engine returns `false` for unknown rules — they silently don't fire.
+`TaskLifecycleService` and `AgendaItemLifecycleService` generate the next
+occurrence transactionally on completion for daily, weekdays, weekly, and
+monthly rules. Replays reuse the persisted completion time and existing
+occurrence identity. There is no launch-time generation or catch-up burst.
+The next date is strictly after both the completion time and the occurrence
+being completed, so early completion cannot return the current occurrence.
+Monthly series retain the original preferred day after shorter-month clamping.
+Biweekly and custom rules remain unsupported.
 
 ### 2.9 Design system files (new in May 2026)
 
 | File | Contents |
 |---|---|
-| `DesignTokens.swift` | `Tokens.Color`, `Tokens.Spacing`, `Tokens.Typography`, `Tokens.Border`, `Tokens.Shadow`, `Tokens.Animation`, `Tokens.Layout`, `AppColor` palette, environment keys for `reduceMotion`, `textSizeMultiplier`, `lowStimulationMode` |
+| `DesignTokens.swift` | `Tokens.Color`, `Tokens.Spacing`, `Tokens.Typography`, `Tokens.Border`, `Tokens.Shadow`, `Tokens.Animation`, `Tokens.Layout`, `AppColor` palette, environment keys for reduced motion, low stimulation, UI scale, and density |
 | `AuDHDComponents.swift` | `AuDHDCard`, `AuDHDButton`, `AuDHDInput`, `OptionCard`, `StatusAlert`, adaptive `Color.app*` extensions |
 | `AuDHDProgressComponents.swift` | `ProgressIndicator`, `ProgressSummary`, `ProgressRing`, `EnergyCheckInCard`, `SkeletonLoader` |
 | `AuDHDLayout.swift` | `ScreenContainer`, `SectionHeader`, `CollapsibleSection`, `NavigationLayout`, `TabBar`, `Sidebar`, `EmptyState`, `AppTab` |
@@ -349,16 +418,19 @@ typealias Task = AgendaTask
 ```
 Existing backlog views (`TaskBacklogView`, `SmartSuggestView`, `TaskDetailView`, `FocusSessionView`) still reference `Task` through the alias and compile fine. **New code: use `AgendaTask` directly.**
 
-### 3.2 Swift 6 strict concurrency — `@MainActor` + `ObservableObject`
+### 3.2 Staged concurrency — `@MainActor` + `ObservableObject`
 
-All four managers must declare `objectWillChange` as `nonisolated`:
+The app and Watch app targets use default main-actor isolation with Swift 5
+language mode and approachable concurrency. Managers with nonisolated
+framework delegates declare `objectWillChange` explicitly:
 ```swift
 @MainActor
 final class SomeManager: NSObject, ObservableObject {
     nonisolated let objectWillChange = ObservableObjectPublisher()
 ```
 
-Without `nonisolated`, delegate callbacks arriving off the main thread cannot call `objectWillChange.send()`, producing Swift 6 errors like:
+Without the isolation bridge, delegate callbacks arriving off the main thread
+cannot safely mutate main-actor state. The current pattern is:
 > "Main actor-isolated property 'objectWillChange' can not be referenced from a nonisolated context"
 
 **Pattern for delegate callbacks:**
@@ -372,16 +444,21 @@ nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
 
 ### 3.3 Non-Sendable types in closures
 
-`[AnyHashable: Any]` (e.g. `UNNotification.request.content.userInfo`) is not `Sendable` and cannot be captured in `@Sendable` closures (Swift 6 strict). Extract primitive values before crossing the isolation boundary:
+`[AnyHashable: Any]` (for example,
+`UNNotification.request.content.userInfo`) is not `Sendable`. Extract
+primitive values in the `nonisolated` delegate method before entering a
+main-actor task:
 
 ```swift
-// ❌ Swift 6 error:
+// ❌ Non-Sendable value crosses an isolation boundary:
 let userInfo = response.notification.request.content.userInfo
-DispatchQueue.main.async { self?.handleAction(userInfo: userInfo) }
+Task { @MainActor in self?.handleAction(userInfo: userInfo) }
 
 // ✅ Correct:
 let clientID = response.notification.request.content.userInfo["clientID"] as? String ?? ""
-DispatchQueue.main.async { self?.handleAction(clientID: clientID) }
+Task { @MainActor in
+    await self?.handleAction(clientID: clientID)
+}
 ```
 
 This pattern is used in `NotificationManager.userNotificationCenter(_:didReceive:)`.
@@ -413,19 +490,27 @@ Color(NSColor { appearance in
 })
 ```
 
-**Status:** flagged for fix in a separate task. Until resolved, `AuDHDComponents.swift` will produce compile errors in the macOS target. Workaround: wrap each static property in `#if os(iOS) / #else / #endif`.
+**Current status:** the color helpers have `#if os(iOS)`/macOS branches using
+`UIColor` and `NSColor`, respectively. Keep that split when adding adaptive
+colors.
 
-### 3.6 CloudKit eventual consistency
+### 3.6 Local-only persistence and future sync
 
-**No `@Attribute(.unique)` is used anywhere.** CloudKit does not enforce uniqueness constraints. If a user syncs from two devices simultaneously, duplicate records are possible. The `clientID: UUID` field on every model is the deduplication key — but deduplication logic is not yet implemented. The app currently trusts CloudKit's last-write-wins behaviour.
-
-**CloudKit sync is not active yet** — `AppContainer.preview` (in-memory) is used in production code. Every app launch starts with `SampleData.populate()`. This must be changed to `AppContainer.production` before shipping.
+The main app opens a file-backed local SwiftData store and performs a
+lightweight v1-to-v2 migration. It does not configure a CloudKit database.
+`clientID` values and CloudKit-friendly model shapes are useful future
+preparation, but there is no production multi-device merge, conflict
+resolution, or deduplication contract today. Enabling CloudKit is a separate
+feature requiring design, migration, entitlement, failure-mode, and
+multi-device testing.
 
 ### 3.7 WatchConnectivity delivery guarantees
 
-`sendMessage(_:replyHandler:)` delivers only if the Watch is reachable (screen on, app in foreground). It silently fails on error (error is logged to console only).
-
-`updateApplicationContext(_:)` delivers **only the most recent** context when the Watch next wakes. If you call `sendSyncSnapshot()` rapidly (e.g. completing three tasks in quick succession), only the last snapshot reaches the Watch. This is acceptable for sync payloads (they're always full snapshots) but would lose intermediate state if you were sending deltas.
+`sendMessage(_:replyHandler:)` is used only as a reachable latency
+optimization. `updateApplicationContext(_:)` retains the newest
+full-replacement phone snapshot, so coalescing does not lose a state delta.
+Watch-originated mutations use `transferUserInfo`, a durable local outbox, event
+IDs, phone-side processed-event tracking, and explicit acknowledgements.
 
 **The `sessionDidDeactivate` handler** calls `WCSession.default.activate()` to handle iPhone handoff between Watch pairs:
 ```swift
@@ -435,14 +520,18 @@ nonisolated func sessionDidDeactivate(_ session: WCSession) {
 ```
 This is required and must not be removed.
 
+The transport logic has source-level tests, not paired-device certification.
+Do not describe background delivery, offline convergence, or complication
+refresh as release-verified until the physical-device matrix in §4.7 passes.
+
 ### 3.8 WeatherKit requires entitlement + capability
 
-`BlockManager` calls `WeatherService.shared.weather(for: location)` which requires:
-1. `com.apple.developer.weatherkit: true` in the entitlements file (currently missing)
-2. WeatherKit capability enabled in Xcode → Signing & Capabilities
-3. Corresponding entry in App Store Connect for the App ID
-
-Without the entitlement, WeatherKit calls throw an authentication error at runtime. `BlockManager.fetchWeather(for:)` catches errors silently (`print` only), so the app won't crash — it just returns no weather suggestions.
+`BlockManager` calls `WeatherService.shared.weather(for: location)`. The
+repository entitlement file declares `com.apple.developer.weatherkit: true`,
+but source presence alone does not establish service authorization. The
+capability must also be enabled for the exact App ID and signing profile, and
+the effective entitlement must be inspected in the signed archive. Runtime
+success and the unavailable-service path still require device testing.
 
 ### 3.9 Location services
 
@@ -451,11 +540,21 @@ Without the entitlement, WeatherKit calls throw an authentication error at runti
 locationManager.desiredAccuracy = kCLLocationAccuracyKilometer
 ```
 
-Location is only requested when an outdoor block is started (`block.type.isOutdoor && block.weatherCheckEnabled`). Without `NSLocationWhenInUseUsageDescription` in Info.plist, the app will crash (required by App Store since iOS 10). This string is not currently in the generated Info.plist.
+Location is requested only when an outdoor block is started
+(`block.type.isOutdoor && block.weatherCheckEnabled`). The main `Info.plist`
+contains `NSLocationWhenInUseUsageDescription`. Verify the system prompt,
+denial/revocation behavior, WeatherKit degradation, and privacy copy on a
+signed device build.
 
-### 3.10 RecurrenceEngine — missing monthly/biweekly support
+### 3.10 Completion-driven recurrence and whole-product encrypted backup
 
-`RecurrenceEngine.shouldFire(template:today:using:)` returns `false` for any rule other than `"daily"`, `"weekly"`, `"weekdays"`. Tasks created with a `recurrenceRule` of `"monthly"` or any other string will silently never generate instances. There is no validation at creation time.
+**Recurrence engine:**
+AuGenda implements completion-driven recurrence in `TaskLifecycle.swift` (`TaskLifecycleService` and `AgendaItemLifecycleService`). It supports `daily`, `weekdays`, `weekly`, and `monthly` rules with idempotent next-occurrence calculation (`RecurrenceCalendar`). It advances strictly beyond the completion time and anchor date to prevent catch-up bursts, preserving original series anchors and applying monthly day clamping. Launch-time generation, biweekly, and arbitrary cron/custom recurrence remain intentionally unsupported.
+
+**Whole-product encrypted backup contract:**
+Whole-product backup and restore lives in `TaskImportExport.swift` (`AuGendaBackupArchive`). It uses authenticated encryption (PBKDF2-derived key + AES-GCM with prefix `AuGendaBackupV1:`) and enforces a 100 MB restore limit and payload SHA256 integrity check. It preserves the complete product graph across all 17 schema entities:
+`AgendaItem`, `AgendaTask`, `AttachedBundle`, `AttachedBundleItem`, `Block`, `BlockTask`, `BundleTemplate`, `BundleTemplateItem`, `FocusSession`, `InboxItem`, `Note`, `Profile`, `ProfilePreferences`, `SubTask`, `TaskRelationship`, `TaskStep`, and `UserPreferences`.
+It also archives resettable UserDefaults preferences and local AI usage/memory history, while strictly excluding Keychain secrets, Watch transport IDs, and transient consent receipts (which must be confirmed after restore).
 
 ### 3.11 Energy filter — minimum floor
 
@@ -488,7 +587,7 @@ Find the current hash:
 ls ~/Library/Developer/Xcode/DerivedData/ | grep AuGenda
 ```
 
-### 4.2 SwiftData store (when production is active)
+### 4.2 SwiftData store
 
 ```
 # iOS device:
@@ -499,7 +598,9 @@ ls ~/Library/Developer/Xcode/DerivedData/ | grep AuGenda
 ~/Library/Containers/ensdev.AuGenda/Data/Library/Application Support/default.store
 ```
 
-The **preview/debug container** (`AppContainer.preview`) is `isStoredInMemoryOnly: true` — no files on disk, wipes on launch.
+Normal production and development launches use the file-backed local store.
+`AppContainer.preview`, `AppContainer.makeTestContainer()`, and the explicit
+`-ui-testing` launch path are in-memory-only.
 
 To inspect the SQLite store during development:
 ```bash
@@ -537,25 +638,115 @@ low-ef-nudge            Low executive function task suggestion
 
 ### 4.5 Build phases
 
-No custom build phases or Run Script phases. No code generation, no SwiftGen, no R.swift, no Sourcery. The SwiftData schema is inferred at runtime from the model class list in `AppContainer.swift` — there are no migration descriptors yet. **Schema migrations are not configured.** Adding, removing, or renaming a `@Model` property without a `VersionedSchema + MigrationPlan` will crash on first launch against an existing store.
+No custom build phases or Run Script phases are configured. There is no code
+generation, SwiftGen, R.swift, or Sourcery. SwiftData uses
+`AuGendaSchemaV1`, `AuGendaSchemaV2`, and `AuGendaMigrationPlan`; the current
+v1-to-v2 stage is lightweight. Any future schema change still requires a new
+version, an explicit migration stage, fixtures representing an actual prior
+store, and failure-path testing before release.
 
 ### 4.6 Test targets
 
-`AuGendaTests` and `AuGendaUITests` exist but contain only the Xcode-generated stub files. No tests have been written yet. Use `AppContainer.makeTestContainer()` in tests — it creates an in-memory container pre-configured with the full schema.
+`AuGendaTests` contains XCTest and Swift Testing suites for persistence,
+migration, import/export, difficulty and state engines, AI policy, Keychain,
+focus/notifications, task relationships, profile deletion, defaults, and the
+Watch contract. The Watch test target includes shared-state/outbox tests.
+
+The UI test targets remain mostly launch templates and do not establish
+end-to-end journey coverage. Use `AppContainer.makeTestContainer()` for
+isolated model tests and the `-ui-testing` launch argument for UI automation.
+
+### 4.7 Dated verification and evidence
+
+**2026-09-08 audit remediation:** The main macOS unit suite passed with
+`xcodebuild test -project AuGenda.xcodeproj -scheme AuGenda -destination 'platform=macOS' -only-testing:AuGendaTests -derivedDataPath build/audit-derived CODE_SIGNING_ALLOWED=NO`.
+New regression coverage verifies owner-scoped agenda privacy/style, conservative
+fallback, snooze precedence for overdue and future items, and early daily/monthly
+completion with replay idempotency for backlog and agenda models. Result bundle:
+`build/audit-derived/Logs/Test/Test-AuGenda-2026.09.08_09-39-33--0600.xcresult`.
+This run does not verify device notification delivery or iOS/watchOS behavior.
+
+
+**2026-07-24 pre-remediation audit baseline**
+
+- macOS main unit suite: **46 passed, 0 failed, 0 skipped**.
+- Production-line coverage from that exact macOS result bundle:
+  **4,161 / 35,484 lines (11.7264%)** for `AuGenda.app`.
+- Unsigned iOS Simulator unit run: **43 passed, 3 failed**; all three failures
+  were Keychain `errSecMissingEntitlement` failures caused by disabling code
+  signing.
+- Focused signed iOS Keychain rerun: **5 passed, 0 failed**.
+- Main-scheme signed build compiled Watch/widget dependencies. A standalone
+  Watch build compiled and linked Watch/widget code but was prevented from
+  completing by unavailable CoreSimulator services.
+
+Those results belong to the audit snapshot before the current remediation
+edits and must not be presented as current-tree status.
+
+**2026-07-24 post-remediation working tree**
+
+- macOS main unit suite: **85 passed, 0 failed, 0 skipped** with unsigned test
+  products; result bundle:
+  `/private/tmp/AuGendaClosureFinal2-20260724.xcresult`.
+- Production-line coverage from that exact result:
+  **2,942 / 38,980 lines (7.5475%)** for `AuGenda.app`. CI enforces a 7% floor;
+  the product target remains well below the >80% goal.
+- Unsigned generic iOS Release build succeeded, including Watch/widget
+  dependencies.
+- Unsigned generic watchOS Release `build-for-testing` succeeded with
+  `ENABLE_TESTABILITY=YES`.
+- The Release iOS package contains the executable, generated icons,
+  `Assets.car`, `Info.plist`, `PkgInfo`, `PrivacyInfo.xcprivacy`, and its Watch
+  app; it contains none of the former prompt, README, validation script, or
+  invalid font files.
+- Static validation passed for all Swift parses, plists, entitlements, privacy
+  manifests, the Xcode project file, workflow YAML, shell syntax, asset JSON,
+  diff whitespace, and targeted current-tree secret patterns.
+
+**Not yet verified as of 2026-07-24**
+
+- App Store-style Release archive, signed-entitlement inspection, validation,
+  notarization, install size, memory, launch-time, scroll, and timer targets;
+- paired physical iPhone/Watch delivery, outbox retry/acknowledgement,
+  complication refresh, stale-title redaction, and App Group provisioning;
+- full VoiceOver, Switch Control, Dynamic Type, Reduce Motion, Increase
+  Contrast, localization, and physical-device accessibility passes;
+- WeatherKit, Google OAuth, local-network Ollama, and external AI providers
+  with release credentials.
 
 ---
 
 ## 5. QUICK REFERENCE — THINGS TO DO BEFORE SHIPPING
 
-- [ ] Replace `AppContainer.preview` → `AppContainer.production` in `AuGendaApp.swift`
-- [ ] Set real CloudKit container ID in `AppContainer.swift` (currently `"iCloud.com.yourname.audhd-agenda"`)
-- [ ] Fill `com.apple.developer.icloud-container-identifiers` array in `AuGenda.entitlements`
-- [ ] Add `com.apple.developer.weatherkit: true` to entitlements
-- [ ] Add WeatherKit capability in Xcode Signing & Capabilities
-- [ ] Add `NSLocationWhenInUseUsageDescription` to Info.plist
-- [ ] Add `NSWeatherKitClientIdentifier` / WeatherKit App ID on developer.apple.com if needed
-- [ ] Add font files to bundle + `UIAppFonts` in Info.plist (Atkinson, OpenDyslexic)
-- [ ] Fix `UIColor` adaptive extensions in `AuDHDComponents.swift` for macOS target
-- [ ] Configure `VersionedSchema` + `SchemaMigrationPlan` before any schema change to a shipped store
-- [ ] Switch `aps-environment` to `production` in entitlements for App Store build
-- [ ] Write unit tests using `AppContainer.makeTestContainer()`
+- [ ] Run the full current-tree iOS, macOS, Watch, widget, unit, and UI matrix
+      and retain result bundles.
+- [ ] Produce and validate signed Release archives; inspect effective
+      entitlements rather than inferring them from source files.
+- [ ] Provision WeatherKit and `group.ensdev.AuGenda.watch` for the exact App
+      IDs and distribution profiles.
+- [ ] Supply release Google OAuth settings and validate the registered callback
+      scheme; do not ship placeholder values.
+- [ ] Complete paired physical iPhone/Watch, complication, offline-outbox, and
+      profile-isolation testing.
+- [ ] Complete the accessibility/device matrix; do not claim WCAG/VoiceOver/
+      Dynamic Type completeness from source review alone.
+- [ ] Verify privacy manifests and the App Store privacy questionnaire against
+      optional AI, speech, location, local-network, Watch, and widget behavior.
+- [ ] Measure release archive/install size, memory, launch, scrolling, and timer
+      behavior on supported hardware.
+- [ ] Add a new `VersionedSchema` and migration stage before the next persistent
+      model change; preserve prior-store fixtures.
+- [ ] Keep system Dynamic Type as the only font option unless licensed custom
+      assets and their full verification gate are added.
+- [ ] Treat CloudKit as an unimplemented future feature unless a separate
+      sync/migration/recovery program is completed.
+
+### Mac local store isolation (2026-09-12)
+
+New native Mac stores use `Application Support/ensdev.AuGenda/AuGenda.store`
+with CloudKit explicitly disabled. Before using that location, startup checks
+an existing legacy `Application Support/default.store` using read-only model
+metadata. Recognized AuGenda stores continue at their existing path; unrelated
+apps' stores are left untouched. Unreadable legacy metadata still produces the
+recovery surface rather than silently creating an empty account. Existing
+dedicated stores take precedence. iOS store placement is unchanged.

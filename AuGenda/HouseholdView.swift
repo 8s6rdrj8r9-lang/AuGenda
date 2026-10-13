@@ -211,8 +211,11 @@ private struct HouseholdItemRow: View {
                 Image(systemName: "circle")
                     .font(.title3)
                     .foregroundStyle(.secondary)
+                    .frame(minWidth: 44, minHeight: 44)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Mark \(item.title) complete for \(profileName)")
+            .accessibilityHint("Marks this assigned task complete")
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.title)
@@ -242,18 +245,20 @@ private struct HouseholdItemRow: View {
     }
 
     private func complete() {
-        ActivityLog.recordCompletion()
-        withAnimation(.spring(duration: 0.3)) {
-            item.isComplete = true
-            item.completedAt = .now
-            item.updatedAt = .now
-        }
-        notificationManager.cancelNotifications(for: item)
         do {
-            try modelContext.save()
+            let next = try AgendaItemLifecycleService.complete(
+                item,
+                in: modelContext
+            )
+            if let next {
+                notificationManager.scheduleNotifications(for: next)
+            }
         } catch {
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            return
         }
+        ActivityLog.recordCompletion()
+        notificationManager.cancelNotifications(for: item)
         #if canImport(WatchConnectivity)
         watchManager.sendSyncSnapshot()
         #endif

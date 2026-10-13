@@ -52,13 +52,23 @@ struct ContentView: View {
     #endif
     @EnvironmentObject private var blockManager: BlockManager
     @EnvironmentObject private var profileManager: ActiveProfileManager
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.controlSize) private var systemControlSize
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var selectedTab: AppTab = .today
+    @State private var resumeRouteID: UUID?
 
     /// Routes the .today tab to the new HomeDashboardView (the five-zone
     /// adaptive surface). Default ON as of Session 7. Users can switch
     /// back to the legacy TodayView via Settings → Experiments.
     @AppStorage("home.dashboard.useNewHome") private var useNewHomeDashboard: Bool = true
+
+    private var shouldReduceMotion: Bool {
+        systemReduceMotion
+            || profileManager.activePreferences?.reduceMotion == true
+            || profileManager.activePreferences?.lowStimulationMode == true
+    }
 
     // Onboarding is now sequenced from RootView (see AuGendaApp.swift) so the
     // three first-launch sheets — ProfileSetup → CognitiveStateSelector →
@@ -73,45 +83,7 @@ struct ContentView: View {
 
             ErrorBanner()
 
-            TabView(selection: $selectedTab) {
-
-                Group {
-                    if useNewHomeDashboard {
-                        HomeDashboardView()
-                    } else {
-                        TodayView()
-                    }
-                }
-                    .tabItem {
-                        Label("Today", systemImage: "calendar.day.timeline.left")
-                    }
-                    .tag(AppTab.today)
-
-                BlockListView()
-                    .tabItem {
-                        Label("Blocks", systemImage: "square.grid.2x2.fill")
-                    }
-                    .tag(AppTab.blocks)
-
-                TaskBacklogView()
-                    .tabItem {
-                        Label("Tasks", systemImage: "checklist")
-                    }
-                    .tag(AppTab.tasks)
-
-                FocusView()
-                    .tabItem {
-                        Label("Focus", systemImage: "timer")
-                    }
-                    .tag(AppTab.focus)
-
-                SettingsView()
-                    .tabItem {
-                        Label("Settings", systemImage: "slider.horizontal.3")
-                    }
-                    .tag(AppTab.settings)
-            }
-            .tint(Color.appAccent)
+            navigationShell
         }
         .environment(\.appFont, profileManager.activeFont)
         // Root-level density injection — the single source for every
@@ -121,7 +93,28 @@ struct ContentView: View {
         // tracking on densityPinnedRaw + currentEnergyLevel, so the root
         // re-renders and re-injects when either changes.
         .environment(\.densityMode, profileManager.activePreferences?.effectiveDensity ?? .functional)
-        .environment(\.uiScale, profileManager.activePreferences?.uiScale ?? 1.0)
+        .environment(\.uiScale, profileManager.activePreferences?.effectiveUIScale ?? 1.0)
+        .environment(
+            \.controlSize,
+            profileManager.activePreferences?.largeTouchTargets == true
+                ? .large
+                : systemControlSize
+        )
+        // Device Increase Contrast still applies normally. This optional
+        // profile-level boost is a rendering effect rather than an attempted
+        // override of SwiftUI's read-only colorSchemeContrast environment.
+        .contrast(
+            profileManager.activePreferences?.highContrastMode == true
+                ? 1.25
+                : 1.0
+        )
+        .environment(\.reduceMotion, shouldReduceMotion)
+        .transaction { transaction in
+            if shouldReduceMotion {
+                transaction.animation = nil
+                transaction.disablesAnimations = true
+            }
+        }
         // No .preferredColorScheme — the app follows the system's
         // light/dark setting. All view-level colours go through the
         // adaptive `Color.app*` helpers (defined in AuDHDComponents.swift)
@@ -133,16 +126,92 @@ struct ContentView: View {
         .onAppear {
             setupOnLaunch()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .agendaItemCompleted)) { note in
-            handleCompleteAction(note.userInfo)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .agendaItemSnoozed)) { note in
-            handleSnoozeAction(note.userInfo)
-        }
         .onReceive(NotificationCenter.default.publisher(for: .selectTab)) { note in
             guard let index = note.userInfo?["index"] as? Int else { return }
             let tabs: [AppTab] = [.today, .blocks, .tasks, .focus, .settings]
             if tabs.indices.contains(index) { selectedTab = tabs[index] }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .resumeActivity)) { note in
+            selectedTab = .today
+            guard let rawID = note.userInfo?["itemID"] as? String else {
+                resumeRouteID = nil
+                return
+            }
+            resumeRouteID = UUID(uuidString: rawID)
+        }
+    }
+
+    @ViewBuilder
+    private var navigationShell: some View {
+        #if os(macOS)
+        splitNavigation
+        #else
+        if horizontalSizeClass == .regular {
+            splitNavigation
+        } else {
+            compactTabNavigation
+        }
+        #endif
+    }
+
+    private var compactTabNavigation: some View {
+        TabView(selection: $selectedTab) {
+            ForEach(AppTab.allCases) { tab in
+                tabContent(for: tab)
+                    .tabItem {
+                        Label(tab.label, systemImage: tab.icon)
+                    }
+                    .tag(tab)
+            }
+        }
+        .tint(Color.appAccent)
+    }
+
+    private var splitNavigation: some View {
+        NavigationSplitView {
+            List {
+                ForEach(AppTab.allCases) { tab in
+                    Button {
+                        selectedTab = tab
+                    } label: {
+                        Label(tab.label, systemImage: tab.icon)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(
+                        selectedTab == tab
+                            ? Color.appAccent.opacity(0.15)
+                            : Color.clear
+                    )
+                    .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
+                }
+            }
+            .navigationTitle("AuGenda")
+            .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 300)
+        } detail: {
+            tabContent(for: selectedTab)
+        }
+        .tint(Color.appAccent)
+    }
+
+    @ViewBuilder
+    private func tabContent(for tab: AppTab) -> some View {
+        switch tab {
+        case .today:
+            if useNewHomeDashboard {
+                HomeDashboardView(resumeRouteID: $resumeRouteID)
+            } else {
+                TodayView()
+            }
+        case .blocks:
+            BlockListView()
+        case .tasks:
+            TaskBacklogView()
+        case .focus:
+            FocusSessionView()
+        case .settings:
+            SettingsView()
         }
     }
 
@@ -154,64 +223,37 @@ struct ContentView: View {
         watchManager.sendSyncSnapshot()
         #endif
         Swift.Task {
-            await notificationManager.requestAuthorization()
+            await notificationManager.refreshAuthorizationStatus()
         }
-    }
-
-    // MARK: - Notification action handlers
-
-    private func handleCompleteAction(_ userInfo: [AnyHashable: Any]?) {
-        guard let idString = userInfo?["clientID"] as? String,
-              let uuid = UUID(uuidString: idString)
-        else { return }
-
-        let descriptor = FetchDescriptor<AgendaItem>(
-            predicate: #Predicate { $0.clientID == uuid }
-        )
-        guard let item = (try? modelContext.fetch(descriptor))?.first else { return }
-        ActivityLog.recordCompletion()
-        item.isComplete = true
-        item.completedAt = .now
-        item.updatedAt = .now
-        do {
-            try modelContext.save()
-        } catch {
-            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
-        }
-        #if canImport(WatchConnectivity)
-        watchManager.sendSyncSnapshot()
-        #endif
-    }
-
-    private func handleSnoozeAction(_ userInfo: [AnyHashable: Any]?) {
-        guard let idString = userInfo?["clientID"] as? String,
-              let uuid = UUID(uuidString: idString),
-              let minutes = userInfo?["minutes"] as? Int
-        else { return }
-
-        let descriptor = FetchDescriptor<AgendaItem>(
-            predicate: #Predicate { $0.clientID == uuid }
-        )
-        guard let item = (try? modelContext.fetch(descriptor))?.first else { return }
-        ActivityLog.recordSnooze()
-        notificationManager.snooze(item: item, minutes: minutes)
-        item.snoozedUntil = Date.now.addingTimeInterval(Double(minutes) * 60)
-        item.updatedAt = .now
-        do {
-            try modelContext.save()
-        } catch {
-            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
-        }
-        #if canImport(WatchConnectivity)
-        watchManager.sendSyncSnapshot()
-        #endif
     }
 }
 
 // MARK: - App Tab
 
-enum AppTab: Hashable {
+enum AppTab: Hashable, CaseIterable, Identifiable {
     case today, blocks, tasks, focus, settings
+
+    var id: Self { self }
+
+    var label: String {
+        switch self {
+        case .today: return "Today"
+        case .blocks: return "Blocks"
+        case .tasks: return "Tasks"
+        case .focus: return "Focus"
+        case .settings: return "Settings"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .today: return "calendar.day.timeline.left"
+        case .blocks: return "square.grid.2x2.fill"
+        case .tasks: return "checklist"
+        case .focus: return "timer"
+        case .settings: return "slider.horizontal.3"
+        }
+    }
 }
 
 // MARK: - Today View
@@ -403,8 +445,11 @@ struct AgendaItemRowView: View {
                 Image(systemName: item.isComplete ? "checkmark.circle.fill" : "circle")
                     .font(.title2)
                     .foregroundStyle(item.isComplete ? Color.appAccent : .secondary)
+                    .frame(minWidth: 44, minHeight: 44)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(item.isComplete ? "\(item.title), completed" : "Mark \(item.title) complete")
+            .accessibilityHint(item.isComplete ? "This task is already complete" : "Marks this task complete")
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title)
@@ -449,8 +494,11 @@ struct AgendaItemRowView: View {
                 Image(systemName: "zzz")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .frame(minWidth: 44, minHeight: 44)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Snooze \(item.title)")
+            .accessibilityHint("Choose how long to hide this task")
             .confirmationDialog("Snooze for…", isPresented: $showSnoozeMenu) {
                 Button("5 minutes") { snooze(minutes: 5) }
                 Button("15 minutes") { snooze(minutes: 15) }
@@ -475,33 +523,37 @@ struct AgendaItemRowView: View {
     }
 
     private func completeItem() {
-        ActivityLog.recordCompletion()
-        withAnimation(.spring(duration: 0.3)) {
-            item.isComplete = true
-            item.completedAt = .now
-            item.updatedAt = .now
-        }
-        notificationManager.cancelNotifications(for: item)
         do {
-            try modelContext.save()
+            let next = try AgendaItemLifecycleService.complete(
+                item,
+                in: modelContext
+            )
+            if let next {
+                notificationManager.scheduleNotifications(for: next)
+            }
         } catch {
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            return
         }
+        ActivityLog.recordCompletion()
+        notificationManager.cancelNotifications(for: item)
         #if canImport(WatchConnectivity)
         watchManager.sendSyncSnapshot()
         #endif
     }
 
     private func snooze(minutes: Int) {
-        ActivityLog.recordSnooze()
-        notificationManager.snooze(item: item, minutes: minutes)
         item.snoozedUntil = Date.now.addingTimeInterval(Double(minutes) * 60)
         item.updatedAt = .now
         do {
             try modelContext.save()
         } catch {
+            modelContext.rollback()
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            return
         }
+        ActivityLog.recordSnooze()
+        notificationManager.snooze(item: item, minutes: minutes)
         #if canImport(WatchConnectivity)
         watchManager.sendSyncSnapshot()
         #endif
@@ -511,11 +563,11 @@ struct AgendaItemRowView: View {
 // MARK: - Friction Dots
 
 struct FrictionDots: View {
-    let level: Int  // 1–5: how hard starting feels (1 = effortless, 5 = very hard)
+    let level: Int  // 1–4: how hard starting feels (1 = effortless, 4 = wall)
 
     var body: some View {
         HStack(spacing: 3) {
-            ForEach(1...5, id: \.self) { dot in
+            ForEach(TaskFieldDomain.friction, id: \.self) { dot in
                 Circle()
                     .fill(dot <= level ? frictionColor : Color.appBorder.opacity(0.5))
                     .frame(width: 5, height: 5)
@@ -712,7 +764,9 @@ struct EnergyCheckView: View {
         do {
             try modelContext.save()
         } catch {
+            modelContext.rollback()
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            return
         }
         // Record so the OrientationAnchor's stale-energy hint can clear.
         EnergyCheckInTracker.record()
@@ -726,6 +780,7 @@ struct EnergyCheckView: View {
         do {
             try modelContext.save()
         } catch {
+            modelContext.rollback()
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
         }
     }
@@ -846,7 +901,9 @@ struct SettingsView: View {
                 profileManager.activePreferences?.updatedAt = .now
                 do {
                     try modelContext.save()
+                    NotificationManager.shared.reconcilePendingAgendaNotifications()
                 } catch {
+                    modelContext.rollback()
                     ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
                 }
             }
@@ -904,7 +961,7 @@ struct SettingsView: View {
                 // ── Focus History ──
                 Section {
                     NavigationLink {
-                        FocusSessionHistoryView()
+                        FocusSessionHistoryView(profileID: profileManager.activeProfile?.clientID)
                     } label: {
                         HStack(spacing: 12) {
                             Image(systemName: "chart.bar")
@@ -941,7 +998,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Privacy")
                 } footer: {
-                    Text("Task content is stored privately in your iCloud account. Notifications fire on this device only and can be redacted for lock-screen safety. Erasing removes local data; if you also want iCloud copies gone, go to Settings → iCloud → Manage Storage → AuGenda.")
+                    Text("Task content is stored on this device. Notifications fire on this device only and can be redacted for lock-screen safety. Erasing removes local AuGenda data from this device.")
                 }
 
                 // Profiles section — each row navigates to per-profile settings
@@ -991,7 +1048,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Profiles")
                 } footer: {
-                    Text("Each profile has its own neurotype settings, font, and preferences. Swipe left to delete.")
+                    Text("Each profile has its own settings. A profile that owns tasks, agenda items, inbox captures, or focus history must be reassigned or cleared before deletion.")
                 }
             }
             .formStyle(.grouped)
@@ -1004,7 +1061,7 @@ struct SettingsView: View {
                 Button("Erase everything", role: .destructive) { eraseAllData() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This permanently deletes every task, block, profile, and preference on this device — plus your saved AI API keys, any Google sign-in, and your AI personalization profile. iCloud copies sync back unless you also remove the AuGenda iCloud container in System Settings. This cannot be undone.")
+                Text("This permanently deletes every task, block, profile, and preference on this device — plus your saved AI API keys, any Google sign-in, and your AI personalization profile. This cannot be undone.")
             }
             .sheet(isPresented: $showAddProfile) {
                 ProfileSetupView(isPresented: $showAddProfile)
@@ -1021,100 +1078,66 @@ struct SettingsView: View {
     /// Wipes every SwiftData entity on this device, every secret in the
     /// Keychain (API keys + OAuth tokens), the AI personalization profile
     /// and usage ledger, and every UserDefaults key the app reads or writes,
-    /// then re-seeds a fresh default profile so the app boots cleanly.
-    /// iCloud copies are NOT touched (CloudKit deletion requires a per-record
-    /// loop the user would have to confirm; the footer copy instructs them to
-    /// use System Settings).
+    /// then re-seeds a fresh default profile so the local-only app boots cleanly.
     private func eraseAllData() {
-        // 1. Delete SwiftData entities. @Relationship cascade rules take care
-        //    of children, but we list parents explicitly for clarity.
+        let externalEraseFailures: [String]
         do {
-            try modelContext.delete(model: AgendaItem.self)
-            try modelContext.delete(model: AgendaTask.self)
-            try modelContext.delete(model: InboxItem.self)
-            try modelContext.delete(model: SubTask.self)
-            try modelContext.delete(model: TaskStep.self)
-            try modelContext.delete(model: Block.self)
-            try modelContext.delete(model: BlockTask.self)
-            try modelContext.delete(model: BundleTemplate.self)
-            try modelContext.delete(model: BundleTemplateItem.self)
-            try modelContext.delete(model: AttachedBundle.self)
-            try modelContext.delete(model: AttachedBundleItem.self)
-            try modelContext.delete(model: ProfilePreferences.self)
-            try modelContext.delete(model: Profile.self)
-            try modelContext.delete(model: UserPreferences.self)
-            try modelContext.delete(model: FocusSession.self)
-            try modelContext.delete(model: TaskRelationship.self)
-            try modelContext.delete(model: Note.self)
-            try modelContext.save()
+            externalEraseFailures = try EraseAllDataService.erase(in: modelContext) {
+                NotificationManager.shared.removeAllNotifications()
+                AppDefaultsKeys.removeResettableValues()
+                // Run file-backed cleanup after defaults so a failed usage
+                // reset can reassert its durable fail-closed recovery marker.
+                let failures = ProtectedDataEraseService.erase()
+                profileManager.activeProfile = nil
+                profileManager.seedDefaultsIfNeeded()
+                return failures
+            }
         } catch {
             ErrorBannerController.shared.show("Could not erase all data: \(error.localizedDescription)")
             return
         }
 
-        // 2. Wipe every secret + AI-derived artefact. "Erase all data" must
-        //    leave no credentials or personal profile behind — these never
-        //    lived in SwiftData, so step 1 doesn't reach them.
-        for provider in AIProvider.allCases {
-            try? KeychainStore.remove(for: provider)   // API keys
-            OAuthCoordinator.shared.signOut(provider: provider)  // OAuth tokens
+        if !externalEraseFailures.isEmpty {
+            let failed = externalEraseFailures.joined(separator: ", ")
+            ErrorBannerController.shared.show(
+                "App data was erased, but these protected items could not be removed: \(failed). Run Erase all data again."
+            )
         }
-        // about-me, tone, interest opt-in, and the on-disk memory JSON
-        PersonalizationStore.shared.resetAll()
-        // spend history (ai-usage-ledger.json in Application Support)
-        AIUsageLedger.shared.clear()
-
-        // 3. Clear every UserDefaults key we use — including AI config.
-        let defaults = UserDefaults.standard
-        for key in [
-            "activity.snoozes", "activity.completions",
-            "energy.lastCheckIn",
-            "irp.lastItemID", "irp.lastItemTitle",
-            "irp.lastActiveDate", "irp.lastContextLabel",
-            "density.advisor.dismissedUntilTS",
-            "home.dashboard.useNewHome",
-            "home.dashboard.density.pinned",
-            "activeProfileID",
-            "morningSetup.lastDate",
-            // AI enrichment config (keys/tokens handled in step 2 above)
-            "ai.enabled", "ai.activeProvider", "ai.autoEnrichNewTasks",
-            "ai.showEnrichButtons",
-            "ai.ollama.host", "ai.ollama.model"
-        ] {
-            defaults.removeObject(forKey: key)
-        }
-
-        // 4. Reset the in-memory active-profile pointer and re-seed defaults.
-        profileManager.activeProfile = nil
-        profileManager.seedDefaultsIfNeeded()
     }
 
     // MARK: - Delete
 
     private func deleteProfiles(at indexSet: IndexSet) {
-        // Guard: must always keep at least one profile
-        guard profiles.count > 1 else { return }
-
-        for index in indexSet {
-            let profile = profiles[index]
-            let isDeletingActive = profileManager.activeProfile?.clientID == profile.clientID
-
-            modelContext.delete(profile)
-
-            // If we just deleted the active profile, switch to the first remaining one
-            if isDeletingActive {
-                let remaining = profiles.enumerated()
-                    .filter { $0.offset != index }
-                    .map { $0.element }
-                if let next = remaining.first {
-                    profileManager.switchTo(next)
-                }
-            }
+        let targets = indexSet.compactMap { profiles.indices.contains($0) ? profiles[$0] : nil }
+        guard !targets.isEmpty, profiles.count - targets.count >= 1 else {
+            ErrorBannerController.shared.show("AuGenda must keep at least one profile.")
+            return
         }
+        let targetIDs = Set(targets.map(\.clientID))
+
+        let remainingID: UUID?
         do {
-            try modelContext.save()
+            remainingID = try ProfileDeletionService.delete(
+                profileIDs: targetIDs,
+                in: modelContext
+            )
         } catch {
-            ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            ErrorBannerController.shared.show(
+                (error as? LocalizedError)?.errorDescription ?? "Couldn't delete profile: \(error.localizedDescription)"
+            )
+            return
+        }
+
+        if let activeID = profileManager.activeProfile?.clientID,
+           targetIDs.contains(activeID),
+           let remainingID,
+           let next = profiles.first(where: { $0.clientID == remainingID })
+                ?? (try? modelContext.fetch(
+                    FetchDescriptor<Profile>(
+                        predicate: #Predicate { $0.clientID == remainingID }
+                    )
+                ).first) {
+            profileManager.switchTo(next)
         }
     }
 }
@@ -1141,6 +1164,7 @@ struct AddAgendaItemView: View {
     @State private var frictionLevel = 3
     @State private var priority = 0
     @State private var contextTag = ""
+    @State private var recurrenceRule: RecurrenceRule = .none
     @State private var assignedToProfileID: UUID? = nil
 
     // Six-axis difficulty model — three of these are NEW dimensions added
@@ -1157,7 +1181,10 @@ struct AddAgendaItemView: View {
 
     // AI enrichment local UI state
     @State private var enrichState: EnrichState = .idle
+    @State private var enrichTask: Task<Void, Never>? = nil
     @State private var enrichmentNote: String? = nil
+    @State private var draftWasEnriched = false
+    @State private var uncommittedEnrichments: [TaskEnrichment] = []
     @AppStorage("ai.enabled") private var aiEnabled: Bool = false
     @AppStorage("ai.activeProvider") private var activeProviderRaw: String = ""
     @AppStorage("ai.showEnrichButtons") private var showEnrichButtons: Bool = true
@@ -1175,8 +1202,18 @@ struct AddAgendaItemView: View {
     ///   5. There's a non-empty title to enrich
     private var canOfferEnrichment: Bool {
         aiEnabled
-        && !activeProviderRaw.isEmpty
+        && AIProvider(rawValue: activeProviderRaw)?.isReleaseEnabled == true
         && showEnrichButtons
+        && !excludeFromAI
+        && !title.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private var canAutoEnrichOnSave: Bool {
+        existingItem == nil
+        && autoEnrich
+        && !draftWasEnriched
+        && aiEnabled
+        && AIProvider(rawValue: activeProviderRaw)?.isReleaseEnabled == true
         && !excludeFromAI
         && !title.trimmingCharacters(in: .whitespaces).isEmpty
     }
@@ -1219,13 +1256,27 @@ struct AddAgendaItemView: View {
                     DatePicker("Time", selection: $scheduledDate, displayedComponents: [.hourAndMinute, .date])
                 }
 
+                Section("Repeat") {
+                    Picker("Schedule", selection: $recurrenceRule) {
+                        ForEach(RecurrenceRule.allCases) { rule in
+                            Text(rule.displayName).tag(rule)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    if recurrenceRule != .none {
+                        Text("Completing this item creates one next future occurrence. Missed dates are not backfilled.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section(frictionLabelName) {
                     Picker(frictionLabelName, selection: $frictionLevel) {
                         Text("1 — Easy start").tag(1)
                         Text("2 — Low").tag(2)
                         Text("3 — Moderate").tag(3)
                         Text("4 — High wall").tag(4)
-                        Text("5 — Very hard").tag(5)
                     }
                     .pickerStyle(.menu)
                 }
@@ -1248,7 +1299,8 @@ struct AddAgendaItemView: View {
                 if canOfferEnrichment {
                     Section {
                         Button {
-                            Task { await runEnrich() }
+                            enrichTask?.cancel()
+                            enrichTask = Task { await runEnrich() }
                         } label: {
                             HStack(spacing: 10) {
                                 switch enrichState {
@@ -1303,7 +1355,7 @@ struct AddAgendaItemView: View {
                                 title: "Interest",
                                 tooltip: "How engaged you are. Higher interest absorbs difficulty.",
                                 value: $interestLevel,
-                                range: 1...5
+                                range: TaskFieldDomain.interest
                             )
                             dimensionSlider(
                                 title: "Sensory load",
@@ -1404,12 +1456,25 @@ struct AddAgendaItemView: View {
                     Button("Cancel") { isPresented = false }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(existingItem == nil ? "Add" : "Save") { saveAndDismiss() }
-                        .disabled(title.isEmpty)
+                    Button(existingItem == nil ? "Add" : "Save") {
+                        Task { await saveAndDismiss() }
+                    }
+                    .disabled(title.isEmpty || enrichState == .running)
                 }
             }
         }
         .onAppear { hydrate() }
+        .onChange(of: aiEnabled) { _, isEnabled in
+            if !isEnabled {
+                enrichTask?.cancel()
+                enrichTask = nil
+                enrichState = .idle
+            }
+        }
+        .onDisappear {
+            enrichTask?.cancel()
+            enrichTask = nil
+        }
     }
 
     private func hydrate() {
@@ -1420,6 +1485,7 @@ struct AddAgendaItemView: View {
             frictionLevel = existing.frictionLevel
             priority = existing.priority
             contextTag = existing.contextTag
+            recurrenceRule = RecurrenceRule(rawValue: existing.recurrenceRule) ?? .none
             assignedToProfileID = existing.assignedToProfileID ?? activeProfile?.clientID
 
             // Six-axis difficulty fields
@@ -1440,15 +1506,23 @@ struct AddAgendaItemView: View {
     /// context, then apply any returned fields to state. Interest level
     /// is never written even if the provider sends one — interest stays
     /// the user's.
+    @MainActor
     private func runEnrich() async {
-        guard AIUsageLedger.shared.canEnrich() else {
-            ErrorBannerController.shared.show("AI enrichment paused — monthly budget reached")
-            return
+        _ = await enrichDraft(updateVisibleState: true)
+    }
+
+    @MainActor
+    @discardableResult
+    private func enrichDraft(updateVisibleState: Bool) async -> Bool {
+        if let reason = AIUsageLedger.shared.enrichmentPauseReason {
+            ErrorBannerController.shared.show(reason)
+            enrichState = .failed(message: reason)
+            return false
         }
         guard let provider = AIProvider(rawValue: activeProviderRaw),
               let enricher = AIEnricherRegistry.enricher(for: provider) else {
             enrichState = .failed(message: "No provider configured.")
-            return
+            return false
         }
 
         let neurotypes: [String] = activeProfile?.neurotypes.map(\.rawValue) ?? []
@@ -1457,9 +1531,7 @@ struct AddAgendaItemView: View {
         // Snapshot personalization (about-me + tone + memory + interest
         // opt-in). Nil when the user hasn't set anything — providers
         // behave as cold-context in that case.
-        let personalization = await MainActor.run {
-            PersonalizationStore.shared.snapshot()
-        }
+        let personalization = PersonalizationStore.shared.snapshot()
 
         let context = EnrichmentContext(
             rawTitle: title.trimmingCharacters(in: .whitespaces),
@@ -1470,26 +1542,31 @@ struct AddAgendaItemView: View {
         )
 
         enrichState = .running
+        defer { enrichTask = nil }
         do {
             let result = try await enricher.enrich(context: context)
+            try Task.checkCancellation()
+            // Fix F-004: Immediately debit/record usage upon receiving response
+            AIUsageLedger.shared.record(result)
             apply(result)
-            await MainActor.run {
-                AIUsageLedger.shared.record(result)
-                // Memory layer — record what just happened so the next
-                // enrichment has continuity. Uses the final difficulty
-                // band, not the AI's guess, so memory reflects what the
-                // user actually ended up with.
-                PersonalizationStore.shared.recordEnrichment(
-                    title: title,
-                    band: DifficultyBand(rank: previewRank)
-                )
-            }
+            // Retain for memory update upon commit
+            uncommittedEnrichments.append(result)
+            draftWasEnriched = true
             let band = DifficultyBand(rank: previewRank).label
             enrichState = .applied(summary: "Difficulty: \(band) · review below.")
+            if !updateVisibleState {
+                enrichmentNote = "Auto-enriched before saving. Review settings anytime in AI Enrichment."
+            }
+            return true
+        } catch is CancellationError {
+            enrichState = .idle
+            return false
         } catch let error as AIEnricherError {
             enrichState = .failed(message: error.errorDescription ?? "Failed")
+            return false
         } catch {
             enrichState = .failed(message: "Unexpected error.")
+            return false
         }
     }
 
@@ -1504,14 +1581,17 @@ struct AddAgendaItemView: View {
         if let v = enrichment.sensoryLoad     { sensoryLoad    = v }
         if let v = enrichment.socialLoad      { socialLoad     = v }
         if let v = enrichment.initiationCost  { initiationCost = v }
-        if let v = enrichment.interest        { interestLevel  = v }   // honored only when opt-in is on
+        if let v = enrichment.interest, PersonalizationStore.shared.allowInterestInference {
+            interestLevel = v
+        }
         if let v = enrichment.contextTag, !v.isEmpty { contextTag = v }
         // Expand "More dimensions" so the user can immediately see what
         // changed. They can collapse it again after reviewing.
         showMoreDimensions = true
     }
 
-    private func saveAndDismiss() {
+    @MainActor
+    private func saveAndDismiss() async {
         if let existing = existingItem {
             // Edit in place — preserve clientID, notes, completion state, etc.
             existing.title = title
@@ -1519,6 +1599,7 @@ struct AddAgendaItemView: View {
             existing.priority = priority
             existing.frictionLevel = frictionLevel
             existing.contextTag = contextTag
+            existing.recurrenceRule = recurrenceRule.rawValue
             existing.assignedToProfileID = assignedToProfileID
             existing.updatedAt = .now
 
@@ -1531,15 +1612,20 @@ struct AddAgendaItemView: View {
             existing.specialInterest  = specialInterest
             existing.excludeFromAI    = excludeFromAI
 
-            // Reschedule notifications so the new time is reflected
-            notificationManager.cancelNotifications(for: existing)
-            notificationManager.scheduleNotifications(for: existing)
             do {
                 try modelContext.save()
             } catch {
+                modelContext.rollback()
                 ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+                return
             }
+            // Publish notification changes only after the edit is durable.
+            notificationManager.cancelNotifications(for: existing)
+            notificationManager.scheduleNotifications(for: existing)
         } else {
+            if canAutoEnrichOnSave {
+                _ = await enrichDraft(updateVisibleState: false)
+            }
             let item = AgendaItem(
                 title: title,
                 scheduledDate: scheduledDate,
@@ -1547,6 +1633,7 @@ struct AddAgendaItemView: View {
                 frictionLevel: frictionLevel,
                 contextTag: contextTag
             )
+            item.recurrenceRule = recurrenceRule.rawValue
             item.energyRequired  = energyRequired
             item.interestLevel   = interestLevel
             item.sensoryLoad     = sensoryLoad
@@ -1563,9 +1650,20 @@ struct AddAgendaItemView: View {
             do {
                 try modelContext.save()
             } catch {
+                modelContext.rollback()
                 ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+                return
             }
             notificationManager.scheduleNotifications(for: item)
+        }
+        let postCommit = AIEnrichmentMutation.publishDraftEffects(
+            enrichments: uncommittedEnrichments,
+            finalTitle: title,
+            finalBand: DifficultyBand(rank: previewRank)
+        )
+        uncommittedEnrichments.removeAll()
+        if let warning = postCommit.userFacingWarning {
+            ErrorBannerController.shared.show(warning)
         }
         isPresented = false
     }
@@ -1706,19 +1804,22 @@ private struct ChildItemCard: View {
     }
 
     private func complete() {
-        ActivityLog.recordCompletion()
         tapped = true
-        withAnimation(.spring(duration: 0.3)) {
-            item.isComplete = true
-            item.completedAt = .now
-            item.updatedAt = .now
-        }
-        notificationManager.cancelNotifications(for: item)
         do {
-            try modelContext.save()
+            let next = try AgendaItemLifecycleService.complete(
+                item,
+                in: modelContext
+            )
+            if let next {
+                notificationManager.scheduleNotifications(for: next)
+            }
         } catch {
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            tapped = false
+            return
         }
+        ActivityLog.recordCompletion()
+        notificationManager.cancelNotifications(for: item)
         #if canImport(WatchConnectivity)
         watchManager.sendSyncSnapshot()
         #endif

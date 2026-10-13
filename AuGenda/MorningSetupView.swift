@@ -1,7 +1,8 @@
 // MorningSetupView.swift
 // AuGenda
 //
-// Daily morning setup wizard — helps Arthur plan his day based on today's energy.
+// Daily capacity check — saves energy and previews existing work without
+// implying that the app schedules or mutates the suggested tasks.
 // Shows on first launch of each day (gated by UserDefaults).
 
 import SwiftUI
@@ -29,7 +30,12 @@ struct MorningSetupView: View {
     }
 
     private var actionableTasks: [AgendaTask] {
-        allTasks.filter { $0.isActionable }
+        let profileID = profileManager.activeProfile?.clientID
+        return allTasks.filter { task in
+            let belongsToProfile = task.assignedToProfileID == nil
+                || task.assignedToProfileID == profileID
+            return belongsToProfile && task.isActionable(in: modelContext)
+        }
             .sorted { $0.ndPriorityScore > $1.ndPriorityScore }
     }
 
@@ -67,7 +73,7 @@ struct MorningSetupView: View {
                     .padding(.vertical, Tokens.Spacing.lg)
                 }
             }
-            .navigationTitle("Morning Setup")
+            .navigationTitle("Daily Capacity")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -149,10 +155,10 @@ struct MorningSetupView: View {
     private var suggestionsStep: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.xl) {
             VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
-                Text("Plan for today")
+                Text("Review today")
                     .font(Tokens.Typography.h1)
                     .foregroundColor(Color.appTextPrimary)
-                Text("Based on your energy, here are suggestions.")
+                Text("Based on your energy, here are existing tasks and blocks you may want to use. Nothing is scheduled automatically.")
                     .font(Tokens.Typography.body)
                     .foregroundColor(Color.appTextSecondary)
             }
@@ -213,9 +219,9 @@ struct MorningSetupView: View {
             }
 
             Button {
-                buildDay()
+                saveCapacity()
             } label: {
-                Text("Build my day")
+                Text("Save today's capacity")
                     .font(Tokens.Typography.label)
                     .fontWeight(.semibold)
                     .frame(maxWidth: .infinity)
@@ -236,10 +242,10 @@ struct MorningSetupView: View {
                 .foregroundColor(Color.appAccent)
 
             VStack(spacing: Tokens.Spacing.sm) {
-                Text("Your day is set")
+                Text("Capacity saved")
                     .font(Tokens.Typography.h1)
                     .foregroundColor(Color.appTextPrimary)
-                Text("Energy level saved, top tasks ready.")
+                Text("Your energy level is updated. No tasks or blocks were changed.")
                     .font(Tokens.Typography.body)
                     .foregroundColor(Color.appTextSecondary)
             }
@@ -262,14 +268,16 @@ struct MorningSetupView: View {
 
     // MARK: - Actions
 
-    private func buildDay() {
+    private func saveCapacity() {
         guard let prefs = profileManager.activePreferences else { return }
         prefs.currentEnergyLevel = selectedEnergy
         prefs.updatedAt = .now
         do {
             try modelContext.save()
         } catch {
+            modelContext.rollback()
             ErrorBannerController.shared.show("Couldn't save: \(error.localizedDescription)")
+            return
         }
         withAnimation {
             step = .building

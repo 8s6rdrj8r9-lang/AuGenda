@@ -10,11 +10,26 @@ struct FocusSessionHistoryView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    @Query(
-        sort: \FocusSession.startTime,
-        order: .reverse
-    )
-    private var sessions: [FocusSession]
+    @Query private var sessions: [FocusSession]
+
+    @MainActor
+    init(profileID: UUID? = nil) {
+        let targetID = profileID ?? ActiveProfileManager.shared.activeProfile?.clientID
+        let descriptor: FetchDescriptor<FocusSession>
+        if let targetID {
+            descriptor = FetchDescriptor<FocusSession>(
+                predicate: #Predicate<FocusSession> {
+                    $0.profileID == nil || $0.profileID == targetID
+                },
+                sortBy: [SortDescriptor(\.startTime, order: .reverse)]
+            )
+        } else {
+            descriptor = FetchDescriptor<FocusSession>(
+                sortBy: [SortDescriptor(\.startTime, order: .reverse)]
+            )
+        }
+        _sessions = Query(descriptor)
+    }
 
     var body: some View {
         NavigationStack {
@@ -85,6 +100,12 @@ private struct SessionRow: View {
                 }
             }
 
+            if session.state == .abandoned, !session.abandonReason.isEmpty {
+                Text("Reason: \(session.abandonReason)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Text(session.startTime, style: .date)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
@@ -96,14 +117,29 @@ private struct SessionRow: View {
 private struct StatusBadge: View {
     let session: FocusSession
 
+    private var presentation: (icon: String, label: String, color: Color) {
+        switch session.state {
+        case .idle:
+            return ("circle.dashed", "Idle", .secondary)
+        case .active:
+            return ("timer", "Active", .blue)
+        case .paused:
+            return ("pause.circle.fill", "Paused", .orange)
+        case .completed:
+            return ("checkmark.circle.fill", "Done", .green)
+        case .abandoned:
+            return ("archivebox.fill", "Abandoned", .secondary)
+        }
+    }
+
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: session.wasCompleted ? "checkmark.circle.fill" : "xmark.circle.fill")
+            Image(systemName: presentation.icon)
                 .font(.caption)
-            Text(session.wasCompleted ? "Done" : "Ended")
+            Text(presentation.label)
                 .font(.caption)
         }
-        .foregroundStyle(session.wasCompleted ? .green : .secondary)
+        .foregroundStyle(presentation.color)
     }
 }
 

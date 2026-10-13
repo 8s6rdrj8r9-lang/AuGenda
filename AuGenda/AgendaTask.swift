@@ -27,10 +27,10 @@ final class AgendaTask {
 
     // MARK: - ND-specific fields
 
-    /// How hard does starting this feel (1 = easy, 5 = wall)
+    /// How hard does starting this feel (1 = easy, 4 = wall)
     var frictionLevel: Int = 3
 
-    /// Energy cost to complete (1 = low, 3 = high)
+    /// Energy cost to complete (1 = low, 4 = high)
     var energyRequired: Int = 2
 
     /// Estimated duration in minutes — ND time blindness mitigation

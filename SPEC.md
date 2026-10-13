@@ -4,7 +4,7 @@
 > layer, six-axis difficulty model, configurable capacity check-ins, and the
 > Gemini OAuth login path. Living document — keep in sync with the code.
 >
-> Last updated: 2026-06-06
+> Last updated: 2026-09-12
 
 AuGenda is an iOS/macOS agenda app for AuDHD brains. Everything below is built
 around the same posture: **calm, glanceable, opt-in, no demands, no surprises.**
@@ -104,6 +104,9 @@ Enrichment is available on any already-made task, not only at creation.
 
 - **Gate** (`TaskDetailView.canEnrich`): `aiEnabled && showEnrichButtons &&
   !task.excludeFromAI && activeProvider != nil`.
+- **Default Engine:** `apple-foundation` (Apple Foundation Models, on-device). Zero cloud egress, 0-cost token accounting, private by default.
+- **ChatGPT Backup:** If `apple-foundation` is unavailable or trips safety filters, and user has enabled backup fallback, automatically route to `openai` (ChatGPT) with user confirmation.
+- **Siri AI Delegation:** Exposes `CaptureBrainDumpIntent`, `EnrichTaskIntent`, and `GetTopFocusTaskIntent` to Siri AI and macOS 27 Spotlight.
 - **Flow:** "Enrich with AI" (sparkles) → `runEnrichment()` → `pendingEnrichment`
   → **`EnrichmentPreviewSheet`** (user reviews the proposal) → `applyEnrichment()`
   writes the fields onto the task. The user always previews before anything is
@@ -116,17 +119,17 @@ Enrichment is available on any already-made task, not only at creation.
 Single source of truth: the `AIProvider` enum. The settings picker and the
 `AIEnrichmentManager` adapter lookup both walk it.
 
-| Provider | `rawValue` | Privacy tier | API key | Default model | Advanced |
+| Provider | `rawValue` | Privacy tier | API key | Default model | Default / Role |
 |---|---|---|---|---|---|
-| Apple (on device) | `apple-foundation` | On device | no | `apple-foundation-3b` | no |
-| Claude (Anthropic) | `claude` | Cloud | yes | `claude-sonnet-4-5` | no |
-| ChatGPT (OpenAI) | `openai` | Cloud | yes | `gpt-4o` | no |
-| Gemini (Google) | `gemini` | Cloud | yes¹ | `gemini-2.5-flash` | no |
-| DeepSeek | `deepseek` | Cloud | yes | `deepseek-chat` | no |
-| Mistral (EU) | `mistral` | Cloud | yes | `mistral-large-latest` | no |
-| Ollama (self-hosted) | `ollama` | Self-hosted | no | `llama3.1:8b` | no |
-| Perplexity | `perplexity` | Cloud | yes | `sonar-pro` | yes |
-| Grok (xAI) | `grok` | Cloud | yes | `grok-3` | yes |
+| Apple (on device) | `apple-foundation` | On device | no | `apple-foundation-3b` | **Default Primary** |
+| ChatGPT (OpenAI) | `openai` | Cloud | yes | `gpt-4o` | **Backup Fallback** |
+| Claude (Anthropic) | `claude` | Cloud | yes | `claude-sonnet-4-5` | Optional |
+| Gemini (Google) | `gemini` | Cloud | yes¹ | `gemini-2.5-flash` | Optional |
+| DeepSeek | `deepseek` | Cloud | yes | `deepseek-chat` | Optional |
+| Mistral (EU) | `mistral` | Cloud | yes | `mistral-large-latest` | Optional |
+| Ollama (self-hosted) | `ollama` | Self-hosted | no | `llama3.1:8b` | Optional |
+| Perplexity | `perplexity` | Cloud | yes | `sonar-pro` | Advanced |
+| Grok (xAI) | `grok` | Cloud | yes | `grok-3` | Advanced |
 
 ¹ Gemini accepts **either** an API key **or** Google OAuth sign-in (see §3).
 
@@ -137,6 +140,7 @@ providers (Perplexity, Grok) hide behind an "Advanced providers" disclosure.
 Each adapter conforms to `AITaskEnricher` (`isAvailable()` + `enrich(context:)`)
 and returns a shared `TaskEnrichment`. Token usage is recorded in
 `AIUsageLedger`; on-device runs report 0 tokens (no cost, ever).
+
 
 ### 2.4 Error handling
 
@@ -274,3 +278,27 @@ later changes.
 | Task detail/edit/enrich | `TaskDetailView.swift`, `AddTaskView` (shared create/edit form) |
 | Settings UI | `AIEnrichmentSettingsView.swift` |
 | Config | `Info.plist` (`CFBundleURLTypes` for the OAuth callback) |
+
+
+## Agenda reminder and recurrence guarantees (2026-09-08)
+
+- Agenda reminders follow the assigned owner's notification privacy and style,
+  regardless of the active household profile. Unassigned or unavailable owners
+  receive private previews and minimal reminders.
+- Refreshing notification privacy or restoring a backup preserves outstanding
+  snooze deadlines, including for overdue items. Snoozes replace the original
+  schedule; expired snoozes do not reinstate it.
+- Completing daily, weekday, weekly, or monthly recurring tasks creates the next
+  occurrence after both the completion time and current occurrence date. Early
+  completion must not stop the series. Monthly dates retain the original day
+  preference, clamped for shorter months. Generation is completion-driven.
+
+### Mac local store isolation (2026-09-12)
+
+New native Mac stores use `Application Support/ensdev.AuGenda/AuGenda.store`
+with CloudKit explicitly disabled. Before using that location, startup checks
+an existing legacy `Application Support/default.store` using read-only model
+metadata. Recognized AuGenda stores continue at their existing path; unrelated
+apps' stores are left untouched. Unreadable legacy metadata still produces the
+recovery surface rather than silently creating an empty account. Existing
+dedicated stores take precedence. iOS store placement is unchanged.

@@ -1,0 +1,6 @@
+{
+  "first_run_assertion": "Capacity choice not found within existing 5-second wait; 1 test failed.",
+  "stop": "Audit-owned xcodebuild received SIGINT after prolonged stalled diagnostic collection.",
+  "retry_reason": "Resolve whether warmed disposable simulator reproduces assertion; disable verbose failure diagnostics and bound individual test execution to 90 seconds.",
+  "source_changes": "none; same compiled Swift source and test assertions"
+}

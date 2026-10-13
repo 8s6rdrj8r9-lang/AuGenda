@@ -2,27 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- aps-environment is "development" for dev builds. Xcode's automatic
-	     code-signing flips this to "production" for App Store archives;
-	     manual signing must be verified before TestFlight upload. -->
-	<key>aps-environment</key>
-	<string>production</string>
-	<key>com.apple.developer.aps-environment</key>
-	<string>production</string>
-
+	<!-- WeatherKit is the only entitlement consumed by the main app.
+	     Push and CloudKit were removed because AuGenda uses local
+	     notifications and a local-only SwiftData store. -->
 	<key>com.apple.developer.weatherkit</key>
 	<true/>
-
-	<!-- CloudKit container identifier. Must match AppContainer.swift's
-	     cloudKitContainerID. Reverse-DNS prefix should reflect your real
-	     Apple Developer team domain before shipping. -->
-	<key>com.apple.developer.icloud-container-identifiers</key>
-	<array>
-		<string>iCloud.com.augenda.AuGenda</string>
-	</array>
-	<key>com.apple.developer.icloud-services</key>
-	<array>
-		<string>CloudKit</string>
-	</array>
 </dict>
 </plist>

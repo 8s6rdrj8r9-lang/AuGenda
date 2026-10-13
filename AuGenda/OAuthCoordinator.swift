@@ -14,8 +14,8 @@
 //     Written with kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly so the
 //     long-lived refresh token never rides along in an encrypted iCloud
 //     device backup or iCloud Keychain — it stays on this device only.
-//   * Expiry stored in @AppStorage as a Date so we know when to refresh
-//     without unwrapping the JWT.
+//   * Expiry is encoded with the token record in Keychain so we know when
+//     to refresh without unwrapping the JWT.
 //
 // Flow:
 //   1. Generate PKCE verifier + challenge
@@ -28,6 +28,7 @@
 import Foundation
 import Combine
 import os.log
+import Security
 #if canImport(AuthenticationServices)
 import AuthenticationServices
 #endif
@@ -75,6 +76,9 @@ enum OAuthError: Error, LocalizedError {
     case tokenExchangeFailed(detail: String)
     case configMissing
     case noKnownTokens
+    case expiredToken
+    case sessionStartFailed
+    case secureRandomFailed
 
     var errorDescription: String? {
         switch self {
@@ -82,8 +86,11 @@ enum OAuthError: Error, LocalizedError {
         case .missingCode:                   return "Provider didn't return an auth code."
         case .missingState, .stateMismatch:  return "Auth state mismatch — possible interception."
         case .tokenExchangeFailed(let d):    return "Token exchange failed: \(d)"
-        case .configMissing:                 return "OAuth client ID missing — see GoogleOAuth.swift."
+        case .configMissing:                 return "Google OAuth is not configured for this build."
         case .noKnownTokens:                 return "Not signed in."
+        case .expiredToken:                  return "Your sign-in expired. Sign in again."
+        case .sessionStartFailed:            return "Couldn't start the secure sign-in session."
+        case .secureRandomFailed:            return "Couldn't create secure sign-in credentials."
         }
     }
 }
@@ -104,25 +111,49 @@ private extension OAuthTokens {
 final class OAuthCoordinator: NSObject, ObservableObject {
 
     static let shared = OAuthCoordinator()
+    private static let oauthKeychainService = "com.augenda.AuGenda.oauth"
+
+    /// Raw record presence for deletion UI. Unlike `isSignedIn`, this does not
+    /// decode, refresh, or remove an expired record; even an unusable token must
+    /// remain visible so the user can retry deletion after a Keychain failure.
+    func hasStoredTokenRecord(provider: AIProvider) -> Bool {
+        do {
+            return try KeychainStore.getData(
+                service: Self.oauthKeychainService,
+                account: OAuthTokens.keychainAccount(for: provider)
+            ) != nil
+        } catch {
+            logger.error(
+                "Could not determine whether an OAuth token record exists: \(error.localizedDescription, privacy: .public)"
+            )
+            return true
+        }
+    }
 
     /// True iff this provider has tokens stored locally.
     func isSignedIn(provider: AIProvider) -> Bool {
-        readTokens(for: provider) != nil
+        guard let tokens = readTokens(for: provider) else { return false }
+        if tokens.isExpiredOrAboutTo, tokens.refreshToken == nil {
+            signOut(provider: provider)
+            return false
+        }
+        return true
     }
 
     /// Read tokens (decoded from Keychain). Nil if not signed in or decode fails.
     func readTokens(for provider: AIProvider) -> OAuthTokens? {
-        let account = "oauth-\(provider.rawValue)"
-        let query: [String: Any] = [
-            kSecClass as String:        kSecClassGenericPassword,
-            kSecAttrService as String:  "com.augenda.AuGenda.oauth",
-            kSecAttrAccount as String:  account,
-            kSecMatchLimit as String:   kSecMatchLimitOne,
-            kSecReturnData as String:   true
-        ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else {
+        let account = OAuthTokens.keychainAccount(for: provider)
+        let data: Data
+        do {
+            guard let stored = try KeychainStore.getData(
+                service: Self.oauthKeychainService,
+                account: account
+            ) else {
+                return nil
+            }
+            data = stored
+        } catch {
+            logger.error("Failed to read stored OAuth tokens: \(error.localizedDescription, privacy: .public)")
             return nil
         }
         let tokens: OAuthTokens
@@ -130,6 +161,11 @@ final class OAuthCoordinator: NSObject, ObservableObject {
             tokens = try JSONDecoder().decode(OAuthTokens.self, from: data)
         } catch {
             logger.error("Failed to decode stored OAuth tokens: \(error.localizedDescription, privacy: .public)")
+            signOut(provider: provider)
+            return nil
+        }
+        guard !tokens.accessToken.isEmpty else {
+            signOut(provider: provider)
             return nil
         }
         return tokens
@@ -137,51 +173,34 @@ final class OAuthCoordinator: NSObject, ObservableObject {
 
     /// Write tokens to Keychain (insert or update).
     func writeTokens(_ tokens: OAuthTokens, for provider: AIProvider) throws {
-        let account = "oauth-\(provider.rawValue)"
+        guard !tokens.accessToken.isEmpty else {
+            throw OAuthError.tokenExchangeFailed(detail: "empty access token")
+        }
+        let account = OAuthTokens.keychainAccount(for: provider)
         let data = try JSONEncoder().encode(tokens)
-
-        let queryBase: [String: Any] = [
-            kSecClass as String:        kSecClassGenericPassword,
-            kSecAttrService as String:  "com.augenda.AuGenda.oauth",
-            kSecAttrAccount as String:  account
-        ]
-        var attrs: [String: Any] = [
-            kSecValueData as String:    data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        ]
-        #if os(iOS)
-        if #available(iOS 15.0, *) {
-            var error: Unmanaged<CFError>?
-            if let accessControl = SecAccessControlCreateWithFlags(
-                kCFAllocatorDefault,
-                kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-                .biometryCurrentSet,
-                &error
-            ) {
-                attrs[kSecAttrAccessControl as String] = accessControl
-            }
-        }
-        #endif
-        if SecItemUpdate(queryBase as CFDictionary, attrs as CFDictionary) == errSecSuccess {
-            return
-        }
-        var insert = queryBase
-        insert.merge(attrs) { _, b in b }
-        let status = SecItemAdd(insert as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw OAuthError.tokenExchangeFailed(detail: "keychain insert \(status)")
+        do {
+            try KeychainStore.setData(data, service: Self.oauthKeychainService, account: account)
+        } catch {
+            throw OAuthError.tokenExchangeFailed(detail: "keychain write: \(error.localizedDescription)")
         }
     }
 
     /// Sign out — drops local tokens. Does NOT revoke server-side; the
     /// user can do that from their provider console if they want.
-    func signOut(provider: AIProvider) {
-        let query: [String: Any] = [
-            kSecClass as String:        kSecClassGenericPassword,
-            kSecAttrService as String:  "com.augenda.AuGenda.oauth",
-            kSecAttrAccount as String:  "oauth-\(provider.rawValue)"
-        ]
-        SecItemDelete(query as CFDictionary)
+    @discardableResult
+    func signOut(provider: AIProvider) -> Bool {
+        do {
+            try KeychainStore.remove(
+                service: Self.oauthKeychainService,
+                account: OAuthTokens.keychainAccount(for: provider)
+            )
+            return true
+        } catch {
+            logger.error(
+                "Failed to remove OAuth tokens during sign-out: \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
     }
 
     // MARK: - Authorize
@@ -191,7 +210,7 @@ final class OAuthCoordinator: NSObject, ObservableObject {
     /// cancel / network failure / state mismatch.
     @MainActor
     func authorize(config: OAuthProviderConfig) async throws -> OAuthTokens {
-        let verifier  = Self.makePKCEVerifier()
+        let verifier  = try Self.makePKCEVerifier()
         let challenge = Self.makePKCEChallenge(verifier: verifier)
         let state     = UUID().uuidString
 
@@ -262,14 +281,23 @@ final class OAuthCoordinator: NSObject, ObservableObject {
             "refresh_token": refresh,
             "grant_type":    "refresh_token"
         ]
-        req.httpBody = body
-            .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }
-            .joined(separator: "&")
-            .data(using: .utf8)
+        req.httpBody = Self.formURLEncoded(body)
 
-        let (data, response) = try await URLSession.shared.data(for: req)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw OAuthError.tokenExchangeFailed(detail: "refresh non-2xx")
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await URLSession.shared.data(for: req)
+        } catch {
+            throw OAuthError.tokenExchangeFailed(detail: "refresh network failure")
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw OAuthError.tokenExchangeFailed(detail: "refresh missing HTTP response")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            if http.statusCode == 400 || http.statusCode == 401 {
+                signOut(provider: config.provider)
+                throw OAuthError.expiredToken
+            }
+            throw OAuthError.tokenExchangeFailed(detail: "refresh HTTP \(http.statusCode)")
         }
 
         let decoded: TokenResponse
@@ -294,7 +322,11 @@ final class OAuthCoordinator: NSObject, ObservableObject {
         guard let tokens = readTokens(for: config.provider) else {
             throw OAuthError.noKnownTokens
         }
-        if tokens.isExpiredOrAboutTo, tokens.refreshToken != nil {
+        if tokens.isExpiredOrAboutTo {
+            guard tokens.refreshToken != nil else {
+                signOut(provider: config.provider)
+                throw OAuthError.expiredToken
+            }
             let refreshed = try await refreshTokens(config: config)
             return refreshed.accessToken
         }
@@ -326,10 +358,7 @@ final class OAuthCoordinator: NSObject, ObservableObject {
             "redirect_uri":  config.redirectURI,
             "grant_type":    "authorization_code"
         ]
-        req.httpBody = body
-            .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }
-            .joined(separator: "&")
-            .data(using: .utf8)
+        req.httpBody = Self.formURLEncoded(body)
 
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
@@ -350,6 +379,27 @@ final class OAuthCoordinator: NSObject, ObservableObject {
             refreshToken: decoded.refresh_token,
             expiresAt:    decoded.expires_in.map { .now.addingTimeInterval(TimeInterval($0)) }
         )
+    }
+
+    /// Encode an application/x-www-form-urlencoded body without allowing
+    /// query delimiters (`&`, `+`, `=`) through inside OAuth token values.
+    static func formURLEncoded(_ parameters: [String: String]) -> Data {
+        let unreserved = CharacterSet(
+            charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+        )
+        let body = parameters
+            .sorted { $0.key < $1.key }
+            .map { key, value in
+                let encodedKey = key.addingPercentEncoding(
+                    withAllowedCharacters: unreserved
+                ) ?? ""
+                let encodedValue = value.addingPercentEncoding(
+                    withAllowedCharacters: unreserved
+                ) ?? ""
+                return "\(encodedKey)=\(encodedValue)"
+            }
+            .joined(separator: "&")
+        return Data(body.utf8)
     }
 
     // MARK: - Web auth session helper
@@ -385,15 +435,20 @@ final class OAuthCoordinator: NSObject, ObservableObject {
             }
             session.presentationContextProvider = OAuthPresentationProvider.shared
             session.prefersEphemeralWebBrowserSession = false
-            _ = session.start()
+            guard session.start() else {
+                continuation.resume(throwing: OAuthError.sessionStartFailed)
+                return
+            }
         }
     }
 
     // MARK: - PKCE helpers
 
-    private static func makePKCEVerifier() -> String {
+    private static func makePKCEVerifier() throws -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            throw OAuthError.secureRandomFailed
+        }
         return Data(bytes).base64URLEncodedString()
     }
 
@@ -424,18 +479,40 @@ final class OAuthPresentationProvider: NSObject, ASWebAuthenticationPresentation
 
     nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         #if os(iOS)
-        // Find the active window scene's key window — works for both
-        // single-scene and multi-scene apps.
-        let scenes = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-        let keyWindow = scenes
-            .first(where: { $0.activationState == .foregroundActive })?
-            .windows.first(where: { $0.isKeyWindow })
-        return keyWindow ?? ASPresentationAnchor()
+        MainActor.assumeIsolated {
+            Self.currentPresentationAnchor()
+        }
         #else
-        return ASPresentationAnchor()
+        MainActor.assumeIsolated {
+            ASPresentationAnchor()
+        }
         #endif
     }
+
+    #if os(iOS)
+    @MainActor
+    private static func currentPresentationAnchor() -> ASPresentationAnchor {
+        // Find the active window scene's key window; if launch timing means no
+        // key window is registered yet, create an anchor bound to that scene.
+        let scenes = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+        let activeScene = scenes.first { $0.activationState == .foregroundActive }
+
+        if let keyWindow = activeScene?.windows.first(where: { $0.isKeyWindow }) {
+            return keyWindow
+        }
+
+        if let anchorScene = activeScene ?? scenes.first {
+            return ASPresentationAnchor(windowScene: anchorScene)
+        }
+
+        // ASWebAuthenticationSession can ask for its anchor while the app is
+        // between scene transitions. Returning a detached anchor lets
+        // `session.start()` fail through the normal recoverable error path
+        // instead of crashing the process.
+        return ASPresentationAnchor()
+    }
+    #endif
 }
 #endif
 

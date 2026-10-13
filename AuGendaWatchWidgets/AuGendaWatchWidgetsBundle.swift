@@ -12,6 +12,5 @@ import SwiftUI
 struct AuGendaWatchWidgetsBundle: WidgetBundle {
     var body: some Widget {
         AuGendaWatchWidgets()
-        AuGendaWatchWidgetsControl()
     }
 }

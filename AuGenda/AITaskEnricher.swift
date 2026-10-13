@@ -18,6 +18,7 @@
 //   * Per-task `excludeFromAI: Bool` flag opts an individual task out.
 
 import Foundation
+import Darwin
 
 // MARK: - Privacy tiers
 
@@ -26,13 +27,13 @@ import Foundation
 /// make an informed choice without reading the full privacy disclosure.
 enum PrivacyTier: String, Sendable {
     case onDevice    // never leaves device (Apple Foundation Models)
-    case selfHosted  // local network only (Ollama)
+    case selfHosted  // user-chosen host (Ollama; may be local or remote)
     case cloud       // third-party API (Claude, OpenAI, Gemini, DeepSeek, Mistral, etc.)
 
     var label: String {
         switch self {
         case .onDevice:   return "On device"
-        case .selfHosted: return "Self-hosted"
+        case .selfHosted: return "User-hosted"
         case .cloud:      return "Cloud"
         }
     }
@@ -95,6 +96,17 @@ enum AIProvider: String, CaseIterable, Sendable, Identifiable {
         }
     }
 
+    /// Providers remain unavailable in production until their current API
+    /// model and response contract have passed the release smoke gate.
+    var isReleaseEnabled: Bool {
+        switch self {
+        case .deepseek:
+            return false
+        default:
+            return true
+        }
+    }
+
     /// Default model ID per provider — used when the user hasn't picked
     /// a specific model. Models current as of 2026-06-03; revisit on
     /// provider major-version updates.
@@ -104,7 +116,10 @@ enum AIProvider: String, CaseIterable, Sendable, Identifiable {
         case .claude:          return "claude-sonnet-4-5"
         case .openai:          return "gpt-4o"
         case .gemini:          return "gemini-2.5-flash"
-        case .deepseek:        return "deepseek-chat"
+        // DeepSeek scheduled its moving aliases for retirement on 2026-07-24.
+        // Require an explicit model ID that is verified against /models instead
+        // of silently sending task data to a stale alias.
+        case .deepseek:        return ""
         case .mistral:         return "mistral-large-latest"
         case .ollama:          return "llama3.1:8b"
         case .perplexity:      return "sonar-pro"
@@ -128,12 +143,46 @@ enum AIProvider: String, CaseIterable, Sendable, Identifiable {
         case .claude:          return "Best nuance + ND-aware framing."
         case .openai:          return "Fast, structured JSON output."
         case .gemini:          return "Generous free tier."
-        case .deepseek:        return "Cheapest cloud. ⚠️ PRC-hosted."
+        case .deepseek:        return "Unavailable pending a live release smoke test."
         case .mistral:         return "EU-hosted. GDPR-aligned."
-        case .ollama:          return "Power-user local LLM."
+        case .ollama:          return "Power-user, user-hosted LLM."
         case .perplexity:      return "Research-focused. Overkill here."
         case .grok:            return "General purpose."
         }
+    }
+
+    /// Official provider terms that govern API input, retention, and training.
+    /// On-device Apple and user-operated Ollama do not have a third-party API
+    /// destination for which AuGenda can present a single applicable policy.
+    var dataTermsURL: URL? {
+        let rawValue: String?
+        switch self {
+        case .appleFoundation, .ollama:
+            rawValue = nil
+        case .claude:
+            rawValue = "https://www.anthropic.com/legal/commercial-terms"
+        case .openai:
+            rawValue = "https://openai.com/policies/services-agreement/"
+        case .gemini:
+            rawValue = "https://ai.google.dev/gemini-api/terms"
+        case .deepseek:
+            rawValue = "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html"
+        case .mistral:
+            rawValue = "https://legal.mistral.ai/terms"
+        case .perplexity:
+            rawValue = "https://www.perplexity.ai/hub/legal/perplexity-api-terms-of-service"
+        case .grok:
+            rawValue = "https://x.ai/legal/terms-of-service-enterprise"
+        }
+        return rawValue.flatMap(URL.init(string:))
+    }
+
+    private var enrichmentPayloadDisclosure: String {
+        "Payload: task title; optional free-form note; active profile neurotype "
+            + "labels; current capacity mode; a response-tone instruction; "
+            + "whether interest inference is enabled; any configured About-you "
+            + "text; and, when history sharing is enabled, the configured number "
+            + "of recent enriched task titles and difficulty bands."
     }
 
     /// Disclosure text shown the first time the user enables a cloud
@@ -141,13 +190,61 @@ enum AIProvider: String, CaseIterable, Sendable, Identifiable {
     var consentDisclosure: String {
         switch self {
         case .appleFoundation:
-            return "Apple's on-device model runs locally on your device. Your task titles, notes, and context never leave the device when this provider is selected."
+            return "\(enrichmentPayloadDisclosure) Apple's model processes this locally, so these fields do not leave the device. AuGenda keeps only the task fields you apply, local usage totals, and optional local personalization memory."
         case .ollama:
-            return "Ollama runs on your own server. Your task data is sent over your local network only — never to a third-party cloud."
+            return "\(enrichmentPayloadDisclosure) Destination: the Ollama server address you configure; a remote HTTPS address leaves your network. Retention and training: AuGenda keeps only applied task fields, local usage totals, and optional local memory; the server operator controls server-side logs, retention, and model training. AuGenda blocks unencrypted HTTP to remote hosts."
         case .deepseek:
-            return "DeepSeek's servers are hosted in the People's Republic of China and subject to PRC data laws. Task titles, notes, and neurotype context will be sent to DeepSeek's API. For sensitive tasks (medical, legal, family) consider Apple on-device or Ollama instead."
+            return "\(enrichmentPayloadDisclosure) Destination: DeepSeek's cloud API, which is subject to PRC law. Retention and training: AuGenda keeps only applied task fields, local usage totals, and optional local memory; DeepSeek may retain or use API data under its current terms. Review the linked provider terms before continuing. AuGenda requires an explicit model ID and verifies it before sending task content."
         default:
-            return "Task titles, notes, and neurotype context will be sent to \(displayName)'s API for enrichment. They may be used per \(displayName)'s terms of service. No task data is sent until you enable enrichment AND select this provider."
+            return "\(enrichmentPayloadDisclosure) Destination: \(displayName)'s cloud API. Retention and training: AuGenda keeps only applied task fields, local usage totals, and optional local memory; the provider may retain or use API data under its current terms. Review the linked provider terms before continuing. No task data is sent until you accept this disclosure and enrich a task."
+        }
+    }
+}
+
+// MARK: - Versioned provider consent
+
+/// Consent is keyed by provider and disclosure version. Increment the version
+/// whenever the payload, destination, or retention disclosure materially
+/// changes; stale selections then fail closed at the outbound boundary.
+enum AIConsentPolicy {
+    static let currentDisclosureVersion = 3
+    static let ollamaDestinationKey = "ai.consent.ollama.destination"
+
+    static func consentKey(for provider: AIProvider) -> String {
+        "ai.consent.\(provider.rawValue).version"
+    }
+
+    static func hasCurrentConsent(
+        for provider: AIProvider,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        guard provider != .appleFoundation else { return true }
+        guard defaults.integer(forKey: consentKey(for: provider))
+                == currentDisclosureVersion else {
+            return false
+        }
+        guard provider == .ollama else { return true }
+        let rawHost = defaults.string(forKey: "ai.ollama.host")
+            ?? "http://localhost:11434"
+        guard let destination = OllamaEndpointPolicy.destinationIdentifier(rawHost) else {
+            return false
+        }
+        return defaults.string(forKey: ollamaDestinationKey) == destination
+    }
+
+    static func recordConsent(
+        for provider: AIProvider,
+        defaults: UserDefaults = .standard
+    ) {
+        defaults.set(currentDisclosureVersion, forKey: consentKey(for: provider))
+        if provider == .ollama {
+            let rawHost = defaults.string(forKey: "ai.ollama.host")
+                ?? "http://localhost:11434"
+            if let destination = OllamaEndpointPolicy.destinationIdentifier(rawHost) {
+                defaults.set(destination, forKey: ollamaDestinationKey)
+            } else {
+                defaults.removeObject(forKey: ollamaDestinationKey)
+            }
         }
     }
 }
@@ -226,10 +323,238 @@ struct TaskEnrichment: Codable, Sendable {
     var usage: Usage?
 
     struct Usage: Codable, Sendable {
+        var id: UUID = UUID()
         var provider: String
         var model: String
         var promptTokens: Int
         var completionTokens: Int
+
+        init(
+            id: UUID = UUID(),
+            provider: String,
+            model: String,
+            promptTokens: Int,
+            completionTokens: Int
+        ) {
+            self.id = id
+            self.provider = provider
+            self.model = model
+            self.promptTokens = promptTokens
+            self.completionTokens = completionTokens
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case id, provider, model, promptTokens, completionTokens
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+            self.provider = try container.decode(String.self, forKey: .provider)
+            self.model = try container.decode(String.self, forKey: .model)
+            self.promptTokens = try container.decode(Int.self, forKey: .promptTokens)
+            self.completionTokens = try container.decode(Int.self, forKey: .completionTokens)
+        }
+    }
+}
+
+/// Strictly decodes provider-authored JSON. Swift's synthesized Decodable
+/// ignores unknown keys, which could silently accept provider schema drift.
+enum EnrichmentPayloadDecoder {
+    private static let allowedKeys: Set<String> = [
+        "title",
+        "taskDescription",
+        "subTasks",
+        "friction",
+        "energy",
+        "sensoryLoad",
+        "socialLoad",
+        "initiationCost",
+        "interest",
+        "estimatedMinutes",
+        "contextTag",
+        "bestTimeOfDay",
+        "confidence"
+    ]
+
+    static func decode(_ data: Data) throws -> TaskEnrichment {
+        let object: Any
+        do {
+            object = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw AIEnricherError.invalidResponse(detail: "enrichment is not valid JSON")
+        }
+        guard let dictionary = object as? [String: Any] else {
+            throw AIEnricherError.invalidResponse(detail: "enrichment must be a JSON object")
+        }
+        let unknownKeys = Set(dictionary.keys).subtracting(allowedKeys)
+        guard unknownKeys.isEmpty else {
+            throw AIEnricherError.invalidResponse(
+                detail: "unknown field(s): \(unknownKeys.sorted().joined(separator: ", "))"
+            )
+        }
+        do {
+            return try JSONDecoder().decode(TaskEnrichment.self, from: data)
+        } catch {
+            throw AIEnricherError.invalidResponse(
+                detail: "enrichment fields do not match the schema"
+            )
+        }
+    }
+}
+
+// MARK: - Provider output validation
+
+/// Validates untrusted model output before any caller can assign it to a task.
+/// Provider-side JSON schemas are advisory; this is the authoritative boundary.
+enum EnrichmentResultValidator {
+
+    static func validate(
+        _ candidate: TaskEnrichment,
+        provider: AIProvider,
+        allowInterest: Bool
+    ) throws -> TaskEnrichment {
+        var result = candidate
+
+        result.title = try normalizedNonemptyTextIfPresent(
+            result.title,
+            field: "title",
+            maxLength: 240
+        )
+        result.taskDescription = try normalizedText(
+            result.taskDescription,
+            field: "taskDescription",
+            maxLength: 8_000
+        )
+        if let contextTag = try normalizedText(
+            result.contextTag,
+            field: "contextTag",
+            maxLength: 20
+        )?.lowercased() {
+            guard Self.allowedContextTags.contains(contextTag) else {
+                throw AIEnricherError.invalidResponse(detail: "contextTag is unsupported")
+            }
+            result.contextTag = contextTag
+        } else {
+            result.contextTag = nil
+        }
+
+        if let subTasks = result.subTasks {
+            guard subTasks.count <= 20 else {
+                throw AIEnricherError.invalidResponse(detail: "too many subTasks")
+            }
+            result.subTasks = try subTasks.map {
+                try normalizedNonemptyTextIfPresent(
+                    $0,
+                    field: "subTask",
+                    maxLength: 500
+                )!
+            }
+        }
+
+        try require(result.friction, in: TaskFieldDomain.friction, field: "friction")
+        try require(result.energy, in: TaskFieldDomain.energy, field: "energy")
+        try require(result.sensoryLoad, in: TaskFieldDomain.load, field: "sensoryLoad")
+        try require(result.socialLoad, in: TaskFieldDomain.load, field: "socialLoad")
+        try require(result.initiationCost, in: TaskFieldDomain.load, field: "initiationCost")
+        try require(result.estimatedMinutes, in: 1...10_080, field: "estimatedMinutes")
+
+        if allowInterest {
+            try require(result.interest, in: TaskFieldDomain.interest, field: "interest")
+        } else {
+            // Defense in depth for providers that ignore the prompt/schema.
+            result.interest = nil
+        }
+
+        if let confidence = result.confidence {
+            guard confidence.isFinite, (0...1).contains(confidence) else {
+                throw AIEnricherError.invalidResponse(detail: "confidence is outside 0...1")
+            }
+        }
+
+        if let rawTime = result.bestTimeOfDay {
+            let time = rawTime.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard ["morning", "afternoon", "evening", "any"].contains(time) else {
+                throw AIEnricherError.invalidResponse(detail: "bestTimeOfDay is unsupported")
+            }
+            result.bestTimeOfDay = time
+        }
+
+        guard let usage = result.usage else {
+            throw AIEnricherError.invalidResponse(detail: "missing usage metadata")
+        }
+        let maximumTokenCount = 10_000_000
+        guard usage.provider == provider.rawValue,
+              !usage.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              (0...maximumTokenCount).contains(usage.promptTokens),
+              (0...maximumTokenCount).contains(usage.completionTokens) else {
+            throw AIEnricherError.invalidResponse(detail: "invalid usage metadata")
+        }
+
+        let hasUsefulContent =
+            result.title != nil
+            || result.taskDescription != nil
+            || !(result.subTasks ?? []).isEmpty
+            || result.friction != nil
+            || result.energy != nil
+            || result.sensoryLoad != nil
+            || result.socialLoad != nil
+            || result.initiationCost != nil
+            || result.interest != nil
+            || result.estimatedMinutes != nil
+            || result.contextTag != nil
+            || result.bestTimeOfDay != nil
+            || result.confidence != nil
+        guard hasUsefulContent else {
+            throw AIEnricherError.invalidResponse(detail: "empty enrichment")
+        }
+
+        return result
+    }
+
+    static let allowedContextTags: Set<String> = [
+        "home", "computer", "phone", "outside", "focus", "errand"
+    ]
+
+    private static func normalizedNonemptyTextIfPresent(
+        _ value: String?,
+        field: String,
+        maxLength: Int
+    ) throws -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw AIEnricherError.invalidResponse(detail: "\(field) is empty")
+        }
+        guard trimmed.count <= maxLength else {
+            throw AIEnricherError.invalidResponse(detail: "\(field) is too long")
+        }
+        return trimmed
+    }
+
+    private static func normalizedText(
+        _ value: String?,
+        field: String,
+        maxLength: Int
+    ) throws -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard trimmed.count <= maxLength else {
+            throw AIEnricherError.invalidResponse(detail: "\(field) is too long")
+        }
+        return trimmed
+    }
+
+    private static func require(
+        _ value: Int?,
+        in allowed: ClosedRange<Int>,
+        field: String
+    ) throws {
+        guard let value else { return }
+        guard allowed.contains(value) else {
+            throw AIEnricherError.invalidResponse(detail: "\(field) is outside \(allowed)")
+        }
     }
 }
 
@@ -237,7 +562,11 @@ struct TaskEnrichment: Codable, Sendable {
 
 enum AIEnricherError: Error, LocalizedError {
     case providerNotConfigured
+    case providerModelUnavailable
     case missingAPIKey
+    case providerConsentRequired
+    case localOnlyPolicyViolation
+    case insecureEndpoint
     case networkFailure(underlying: Error?)
     case invalidResponse(detail: String)
     case rateLimited
@@ -253,7 +582,11 @@ enum AIEnricherError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .providerNotConfigured:   return "Pick a provider in Settings → AI Enrichment first."
+        case .providerModelUnavailable:return "Configure and verify a currently supported model for this provider."
         case .missingAPIKey:           return "This provider needs an API key. Add one in Settings."
+        case .providerConsentRequired: return "Review and accept this provider's current data disclosure in Settings before enriching."
+        case .localOnlyPolicyViolation:return "Local AI only is on, so this provider or host is blocked."
+        case .insecureEndpoint:        return "Remote Ollama servers must use HTTPS so task data is encrypted in transit."
         case .networkFailure:          return "Couldn't reach the provider. Check your connection."
         case .invalidResponse(let d):  return "Provider returned an unexpected response: \(d)"
         case .rateLimited:             return "Rate limited. Wait a moment and try again."
@@ -265,6 +598,195 @@ enum AIEnricherError: Error, LocalizedError {
             return "Apple's on-device safety filter blocked this task — usually a false positive on harmless wording. Try rephrasing the title slightly, or use a cloud provider for this one."
         case .onDeviceModelFailed:
             return "The on-device model couldn't finish this one. Try again, or switch to a cloud provider in Settings."
+        }
+    }
+}
+
+// MARK: - Outbound privacy policy
+
+enum OllamaEndpointClassification: Equatable {
+    case loopback
+    case privateNetwork
+    case remote
+    case invalid
+}
+
+enum OllamaEndpointPolicy {
+
+    static func validatedURL(_ rawValue: String) throws -> URL {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = components.host,
+              !host.isEmpty,
+              components.user == nil,
+              components.password == nil,
+              let url = components.url else {
+            throw AIEnricherError.invalidResponse(detail: "invalid Ollama server URL")
+        }
+        return url
+    }
+
+    static func destinationIdentifier(_ rawValue: String) -> String? {
+        (try? validatedURL(rawValue))?.absoluteString
+    }
+
+    static func classify(_ rawValue: String) -> OllamaEndpointClassification {
+        guard let url = try? validatedURL(rawValue),
+              var host = URLComponents(url: url, resolvingAgainstBaseURL: false)?.host?
+                .lowercased() else {
+            return .invalid
+        }
+
+        if host.hasPrefix("[") && host.hasSuffix("]") {
+            host.removeFirst()
+            host.removeLast()
+        }
+
+        if host == "localhost" || host.hasSuffix(".localhost") || host == "::1" {
+            return .loopback
+        }
+        if host.hasSuffix(".local") {
+            return .privateNetwork
+        }
+
+        if let octets = ipv4Octets(host) {
+            if octets[0] == 127 { return .loopback }
+            if octets[0] == 10
+                || (octets[0] == 192 && octets[1] == 168)
+                || (octets[0] == 172 && (16...31).contains(octets[1]))
+                || (octets[0] == 169 && octets[1] == 254) {
+                return .privateNetwork
+            }
+            return .remote
+        }
+
+        if host.contains(":") {
+            guard let bytes = ipv6Bytes(host) else { return .invalid }
+            if bytes.dropLast().allSatisfy({ $0 == 0 }), bytes.last == 1 {
+                return .loopback
+            }
+            // IPv4-mapped IPv6 (::ffff:a.b.c.d) inherits the embedded IPv4
+            // classification instead of being treated as an arbitrary remote.
+            if bytes.prefix(10).allSatisfy({ $0 == 0 }),
+               bytes[10] == 0xff,
+               bytes[11] == 0xff {
+                return classifyIPv4(Array(bytes[12...15]))
+            }
+            // IPv6 unique-local (fc00::/7) and link-local (fe80::/10).
+            if bytes[0] & 0xfe == 0xfc
+                || (bytes[0] == 0xfe && bytes[1] & 0xc0 == 0x80) {
+                return .privateNetwork
+            }
+            return .remote
+        }
+
+        return .remote
+    }
+
+    static func warning(for rawValue: String) -> String? {
+        guard let url = try? validatedURL(rawValue) else {
+            return "Enter a full http or https URL without embedded credentials."
+        }
+        let classification = classify(rawValue)
+        if classification == .invalid {
+            return "Enter a valid Ollama host name or IP address."
+        }
+        if url.scheme?.lowercased() == "http", classification == .remote {
+            return "Remote Ollama hosts must use HTTPS; AuGenda will block this address."
+        }
+        if classification == .remote {
+            return "This is a remote host. Task and enabled personalization data will leave your local network."
+        }
+        return nil
+    }
+
+    static func isLocal(_ classification: OllamaEndpointClassification) -> Bool {
+        classification == .loopback || classification == .privateNetwork
+    }
+
+    private static func ipv4Octets(_ host: String) -> [Int]? {
+        let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return nil }
+        guard parts.allSatisfy({ part in
+            !part.isEmpty
+                && part.count <= 3
+                && (part.count == 1 || part.first != "0")
+                && part.utf8.allSatisfy { (48...57).contains($0) }
+        }) else {
+            return nil
+        }
+        let octets = parts.compactMap { Int($0) }
+        guard octets.count == 4, octets.allSatisfy({ (0...255).contains($0) }) else {
+            return nil
+        }
+        return octets
+    }
+
+    private static func ipv6Bytes(_ host: String) -> [UInt8]? {
+        let unscopedHost = host.split(separator: "%", maxSplits: 1)
+            .first
+            .map(String.init) ?? host
+        var address = in6_addr()
+        let parsed = unscopedHost.withCString {
+            inet_pton(AF_INET6, $0, &address)
+        }
+        guard parsed == 1 else { return nil }
+        return withUnsafeBytes(of: &address) { Array($0) }
+    }
+
+    private static func classifyIPv4(_ octets: [UInt8]) -> OllamaEndpointClassification {
+        guard octets.count == 4 else { return .invalid }
+        if octets[0] == 127 { return .loopback }
+        if octets[0] == 10
+            || (octets[0] == 192 && octets[1] == 168)
+            || (octets[0] == 172 && (16...31).contains(Int(octets[1])))
+            || (octets[0] == 169 && octets[1] == 254) {
+            return .privateNetwork
+        }
+        return .remote
+    }
+}
+
+enum AIOutboundPolicy {
+
+    static func enforce(
+        provider: AIProvider,
+        defaults: UserDefaults = .standard
+    ) throws {
+        guard defaults.bool(forKey: "ai.enabled") else {
+            throw AIEnricherError.providerNotConfigured
+        }
+
+        if provider == .ollama {
+            let rawHost = defaults.string(forKey: "ai.ollama.host")
+                ?? "http://localhost:11434"
+            let url = try OllamaEndpointPolicy.validatedURL(rawHost)
+            let classification = OllamaEndpointPolicy.classify(rawHost)
+
+            guard classification != .invalid else {
+                throw AIEnricherError.invalidResponse(detail: "invalid Ollama server host")
+            }
+            if url.scheme?.lowercased() == "http", classification == .remote {
+                throw AIEnricherError.insecureEndpoint
+            }
+            if defaults.bool(forKey: "ai.localOnlyMode"),
+               !OllamaEndpointPolicy.isLocal(classification) {
+                throw AIEnricherError.localOnlyPolicyViolation
+            }
+            guard AIConsentPolicy.hasCurrentConsent(for: provider, defaults: defaults) else {
+                throw AIEnricherError.providerConsentRequired
+            }
+            return
+        }
+
+        if defaults.bool(forKey: "ai.localOnlyMode"),
+           provider.privacyTier == .cloud {
+            throw AIEnricherError.localOnlyPolicyViolation
+        }
+        guard AIConsentPolicy.hasCurrentConsent(for: provider, defaults: defaults) else {
+            throw AIEnricherError.providerConsentRequired
         }
     }
 }
@@ -307,10 +829,10 @@ enum EnrichmentPrompt {
         let tone = personalization?.tone ?? .calm
 
         let interestRule = allowInterest
-            ? "- Estimate interestLevel (1 = tedious, 5 = genuinely interesting) "
+            ? "- Estimate interest (1 = tedious, 5 = genuinely interesting) "
               + "based on the user's About-me notes and recent task history. "
               + "Mark a lower confidence if unsure — the user can override."
-            : "- NEVER infer interestLevel. That field is private to the user. "
+            : "- NEVER infer interest. That field is private to the user. "
               + "Leave it null in your response."
 
         return """
@@ -353,7 +875,6 @@ enum EnrichmentPrompt {
             }
             if !personalization.recentMemory.isEmpty {
                 let lines = personalization.recentMemory
-                    .suffix(5)
                     .map { "- \($0.title) (rated \($0.band))" }
                     .joined(separator: "\n")
                 parts.append("Recent tasks the user enriched:\n\(lines)")
@@ -388,20 +909,21 @@ enum EnrichmentPrompt {
         {
           "type": "object",
           "properties": {
-            "title":            { "type": "string" },
-            "taskDescription":  { "type": "string" },
-            "subTasks":         { "type": "array", "items": { "type": "string" } },
-            "friction":         { "type": "integer", "minimum": 1, "maximum": 4 },
-            "energy":           { "type": "integer", "minimum": 1, "maximum": 4 },
-            "sensoryLoad":      { "type": "integer", "minimum": 0, "maximum": 3 },
-            "socialLoad":       { "type": "integer", "minimum": 0, "maximum": 3 },
-            "initiationCost":   { "type": "integer", "minimum": 0, "maximum": 3 },
+            "title":            { "type": ["string", "null"], "minLength": 1, "maxLength": 240 },
+            "taskDescription":  { "type": ["string", "null"], "maxLength": 8000 },
+            "subTasks":         { "type": ["array", "null"], "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
+            "friction":         { "type": ["integer", "null"], "minimum": 1, "maximum": 4 },
+            "energy":           { "type": ["integer", "null"], "minimum": 1, "maximum": 4 },
+            "sensoryLoad":      { "type": ["integer", "null"], "minimum": 0, "maximum": 3 },
+            "socialLoad":       { "type": ["integer", "null"], "minimum": 0, "maximum": 3 },
+            "initiationCost":   { "type": ["integer", "null"], "minimum": 0, "maximum": 3 },
             \(interestProperty)
-            "estimatedMinutes": { "type": "integer", "minimum": 1 },
-            "contextTag":       { "type": "string" },
-            "bestTimeOfDay":    { "type": "string", "enum": ["morning","afternoon","evening","any"] },
-            "confidence":       { "type": "number", "minimum": 0, "maximum": 1 }
-          }
+            "estimatedMinutes": { "type": ["integer", "null"], "minimum": 1, "maximum": 10080 },
+            "contextTag":       { "type": ["string", "null"], "enum": ["home","computer","phone","outside","focus","errand",null] },
+            "bestTimeOfDay":    { "type": ["string", "null"], "enum": ["morning","afternoon","evening","any",null] },
+            "confidence":       { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+          },
+          "additionalProperties": false
         }
         """
     }
@@ -418,16 +940,91 @@ enum AIEnricherRegistry {
     /// nil if the provider isn't compiled in (shouldn't happen in
     /// production; defensive for partial-build scenarios).
     static func enricher(for provider: AIProvider) -> AITaskEnricher? {
+        guard provider.isReleaseEnabled else { return nil }
+        let base: any AITaskEnricher
         switch provider {
-        case .appleFoundation: return AppleFoundationEnricher()
-        case .claude:          return ClaudeEnricher()
-        case .openai:          return OpenAIEnricher()
-        case .gemini:          return GeminiEnricher()
-        case .deepseek:        return DeepSeekEnricher()
-        case .mistral:         return MistralEnricher()
-        case .ollama:          return OllamaEnricher()
-        case .perplexity:      return PerplexityEnricher()
-        case .grok:            return GrokEnricher()
+        case .appleFoundation: base = AppleFoundationEnricher()
+        case .claude:          base = ClaudeEnricher()
+        case .openai:          base = OpenAIEnricher()
+        case .gemini:          base = GeminiEnricher()
+        case .deepseek:        base = DeepSeekEnricher()
+        case .mistral:         base = MistralEnricher()
+        case .ollama:          base = OllamaEnricher()
+        case .perplexity:      base = PerplexityEnricher()
+        case .grok:            base = GrokEnricher()
         }
+        return ProtectedAIEnricher(base: base)
     }
 }
+
+/// The single application-facing provider boundary. It enforces privacy
+/// policy before a network-capable adapter runs, then validates untrusted
+/// output before the task editor can observe it.
+struct ProtectedAIEnricher: AITaskEnricher {
+    let base: any AITaskEnricher
+
+    var provider: AIProvider { base.provider }
+
+    func isAvailable() async -> Bool {
+        do {
+            try AIOutboundPolicy.enforce(provider: provider)
+        } catch {
+            return false
+        }
+        return await base.isAvailable()
+    }
+
+    func enrich(context: EnrichmentContext) async throws -> TaskEnrichment {
+        try AIOutboundPolicy.enforce(provider: provider)
+        do {
+            let candidate = try await base.enrich(context: context)
+            return try EnrichmentResultValidator.validate(
+                candidate,
+                provider: provider,
+                allowInterest: context.personalization?.allowInterestInference == true
+            )
+        } catch let primaryError as AIEnricherError {
+            if provider == .appleFoundation, shouldAttemptBackupFallback(for: primaryError) {
+                if let fallback = makeBackupEnricher() {
+                    do {
+                        return try await fallback.enrich(context: context)
+                    } catch {
+                        // Fallback also failed; bubble up primary error or fallback details
+                        throw primaryError
+                    }
+                }
+            }
+            throw primaryError
+        } catch {
+            if provider == .appleFoundation,
+               UserDefaults.standard.bool(forKey: "ai.enableBackupFallback"),
+               !UserDefaults.standard.bool(forKey: "ai.localOnlyMode") {
+                if let fallback = makeBackupEnricher() {
+                    return try await fallback.enrich(context: context)
+                }
+            }
+            throw error
+        }
+    }
+
+    private func shouldAttemptBackupFallback(for error: AIEnricherError) -> Bool {
+        let defaults = UserDefaults.standard
+        let isEnabled = defaults.object(forKey: "ai.enableBackupFallback") == nil ? true : defaults.bool(forKey: "ai.enableBackupFallback")
+        guard isEnabled, !defaults.bool(forKey: "ai.localOnlyMode") else { return false }
+        switch error {
+        case .onDeviceGuardrailTripped, .onDeviceModelUnavailable, .onDeviceModelFailed, .unsupportedOnThisDevice:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func makeBackupEnricher() -> (any AITaskEnricher)? {
+        let backupRaw = UserDefaults.standard.string(forKey: "ai.backupProvider") ?? AIProvider.openai.rawValue
+        guard let backupProvider = AIProvider(rawValue: backupRaw), backupProvider != .appleFoundation else {
+            return nil
+        }
+        return AIEnricherRegistry.enricher(for: backupProvider)
+    }
+}
+

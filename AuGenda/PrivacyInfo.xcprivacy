@@ -9,9 +9,10 @@
 	  when an app uses "required reason" APIs. Declared truthfully:
 	    * NSPrivacyTracking = false — no cross-site tracking, no IDFA
 	    * NSPrivacyTrackingDomains = [] — no calls to any tracking server
-	    * NSPrivacyCollectedDataTypes = [] — all user data stays in the
-	      user's own iCloud Private Database; AuGenda the company has zero
-	      backend and cannot see user task content
+	    * Optional AI enrichment can transmit user-entered task/profile
+	      content and neurotype context to a provider chosen by the user.
+	      Those categories are declared for app functionality even though
+	      Apple on-device mode performs no such transmission.
 	    * NSPrivacyAccessedAPITypes — UserDefaults usage declared with
 	      reason CA92.1 (access info from same app per documentation)
 	-->
@@ -20,7 +21,32 @@
 	<key>NSPrivacyTrackingDomains</key>
 	<array/>
 	<key>NSPrivacyCollectedDataTypes</key>
-	<array/>
+	<array>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeOtherUserContent</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeHealth</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSPrivacyAccessedAPITypes</key>
 	<array>
 		<dict>

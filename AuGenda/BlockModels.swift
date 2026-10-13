@@ -181,8 +181,12 @@ final class Block {
     var icon: String { type.icon }
 
     var isComplete: Bool {
-        guard let tasks = tasks, !tasks.isEmpty else { return false }
-        return tasks.allSatisfy { $0.isComplete }
+        if completedAt != nil, !isActive {
+            return true
+        }
+        let requiredTasks = tasks?.filter { !$0.isOptional } ?? []
+        guard !requiredTasks.isEmpty else { return false }
+        return requiredTasks.allSatisfy { $0.isComplete }
     }
 
     var completedTaskCount: Int {
@@ -196,7 +200,6 @@ final class Block {
     // True if startup block and not yet complete today
     var shouldAutoSurface: Bool {
         guard type == .startup else { return false }
-        guard !isComplete else { return false }
         guard let last = lastCompletedDate else { return true }
         return !Calendar.current.isDateInToday(last)
     }

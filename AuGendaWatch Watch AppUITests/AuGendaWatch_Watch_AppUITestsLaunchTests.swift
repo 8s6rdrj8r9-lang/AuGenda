@@ -22,13 +22,13 @@ final class AuGendaWatch_Watch_AppUITestsLaunchTests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        // Insert steps here to perform after app launch but before taking a screenshot,
-        // such as logging into a test account or navigating somewhere in the app
-        // XCUIAutomation Documentation
-        // https://developer.apple.com/documentation/xcuiautomation
+        XCTAssertTrue(
+            app.staticTexts["CAPTURE"].waitForExistence(timeout: 5),
+            "Every Watch launch configuration must expose capture"
+        )
 
         let attachment = XCTAttachment(screenshot: app.screenshot())
-        attachment.name = "Launch Screen"
+        attachment.name = "Watch capture surface"
         attachment.lifetime = .keepAlways
         add(attachment)
     }

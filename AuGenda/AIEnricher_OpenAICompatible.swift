@@ -58,6 +58,14 @@ private struct OAChatResponse: Decodable {
     }
 }
 
+private struct OAModelListResponse: Decodable {
+    let data: [OAModel]
+
+    struct OAModel: Decodable {
+        let id: String
+    }
+}
+
 // MARK: - Client
 
 /// Shared client for any OpenAI-compatible provider. Adapters instantiate
@@ -77,6 +85,42 @@ struct OpenAICompatibleClient: Sendable {
         self.model = model
         self.providerKey = providerKey
         self.usesBearerAuth = usesBearerAuth
+    }
+
+    /// Credential and endpoint check that sends no task or personalization
+    /// content. When a model is required, it must appear in the provider's
+    /// current model list.
+    func isAvailable(requiredModel: String? = nil) async -> Bool {
+        let storedKey: String?
+        do {
+            storedKey = try KeychainStore.get(for: providerKey)
+        } catch {
+            return false
+        }
+        guard let key = storedKey, !key.isEmpty else {
+            return false
+        }
+
+        var request = URLRequest(url: baseURL.appendingPathComponent("models"))
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if usesBearerAuth {
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        request.timeoutInterval = 10
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else {
+                return false
+            }
+            guard let requiredModel else { return true }
+            let decoded = try JSONDecoder().decode(OAModelListResponse.self, from: data)
+            return decoded.data.contains { $0.id == requiredModel }
+        } catch {
+            return false
+        }
     }
 
     func enrich(context: EnrichmentContext) async throws -> TaskEnrichment {
@@ -157,7 +201,7 @@ struct OpenAICompatibleClient: Sendable {
 
         var enrichment: TaskEnrichment
         do {
-            enrichment = try JSONDecoder().decode(TaskEnrichment.self, from: contentData)
+            enrichment = try EnrichmentPayloadDecoder.decode(contentData)
         } catch {
             // Some providers wrap JSON in ```json fences — strip and retry once.
             let stripped = Self.stripCodeFences(content)
@@ -166,7 +210,7 @@ struct OpenAICompatibleClient: Sendable {
             }
             let retry: TaskEnrichment
             do {
-                retry = try JSONDecoder().decode(TaskEnrichment.self, from: strippedData)
+                retry = try EnrichmentPayloadDecoder.decode(strippedData)
             } catch {
                 logger.error("OpenAI-compatible inner decode failed after stripping fences: \(error.localizedDescription, privacy: .public)")
                 throw AIEnricherError.invalidResponse(detail: "inner decode failed: \(error.localizedDescription)")
@@ -174,11 +218,16 @@ struct OpenAICompatibleClient: Sendable {
             enrichment = retry
         }
 
+        guard let wireUsage = decoded.usage,
+              let promptTokens = wireUsage.prompt_tokens,
+              let completionTokens = wireUsage.completion_tokens else {
+            throw AIEnricherError.invalidResponse(detail: "missing token usage")
+        }
         enrichment.usage = TaskEnrichment.Usage(
             provider:         providerKey.rawValue,
             model:            model,
-            promptTokens:     decoded.usage?.prompt_tokens ?? 0,
-            completionTokens: decoded.usage?.completion_tokens ?? 0
+            promptTokens:     promptTokens,
+            completionTokens: completionTokens
         )
 
         // Defense in depth — strip interest if the caller didn't allow it.

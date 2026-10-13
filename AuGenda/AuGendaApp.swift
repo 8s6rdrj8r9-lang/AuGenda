@@ -14,6 +14,7 @@ import WatchConnectivity
 @main
 struct AuGendaApp: App {
 
+    @State private var persistenceStartup: PersistenceStartupState
     @StateObject private var notificationManager = NotificationManager.shared
     @StateObject private var blockManager = BlockManager.shared
     @StateObject private var profileManager = ActiveProfileManager.shared
@@ -22,6 +23,20 @@ struct AuGendaApp: App {
     #endif
 
     @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        #if DEBUG
+        if CommandLine.arguments.contains("-ui-testing") {
+            _persistenceStartup = State(
+                initialValue: .ready(AppContainer.makeTestContainer())
+            )
+            return
+        }
+        #endif
+        _persistenceStartup = State(
+            initialValue: AppContainer.makePersistentLocalStartupState()
+        )
+    }
 
     /// Bridge a macOS menu command to the TabView's selection. Posts a
     /// notification ContentView observes — keeps tab state owned by the view
@@ -34,16 +49,25 @@ struct AuGendaApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                // .dev = file-backed, no CloudKit yet. Fresh installs start
-                // empty so the first-launch flow (ProfileSetup → capacity →
-                // onboarding tour) fires correctly. Swap to .production once
-                // the CloudKit container ID is real (see AppContainer.swift).
-                .modelContainer(AppContainer.dev)
+            Group {
+                switch persistenceStartup {
+                case .ready(let container):
+                    RootView()
+                        // File-backed and local-only. Fresh installs start
+                        // empty so the first-launch flow (ProfileSetup →
+                        // capacity → onboarding tour) fires correctly.
+                        .modelContainer(container)
+
+                case .failed(let failure):
+                    PersistenceRecoveryView(failure: failure) {
+                        persistenceStartup = AppContainer.makePersistentLocalStartupState()
+                    }
+                }
+            }
                 .environmentObject(notificationManager)
                 .environmentObject(blockManager)
                 .environmentObject(profileManager)
-                .environment(\.uiScale, profileManager.activePreferences?.uiScale ?? 1.0)
+                .environment(\.uiScale, profileManager.activePreferences?.effectiveUIScale ?? 1.0)
                 #if os(iOS)
                 .environment(\.reduceMotion, profileManager.activePreferences?.reduceMotion ?? UIAccessibility.isReduceMotionEnabled)
                 #else
@@ -67,6 +91,7 @@ struct AuGendaApp: App {
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
+            guard persistenceStartup.isReady else { return }
             #if canImport(WatchConnectivity)
             switch newPhase {
             case .active:
@@ -83,6 +108,67 @@ struct AuGendaApp: App {
             }
             #endif
         }
+    }
+}
+
+// MARK: - Persistence Recovery
+
+/// A deliberately non-writable launch surface. The failed store is left in
+/// place and no model context exists until a retry successfully opens it.
+private struct PersistenceRecoveryView: View {
+    let failure: PersistenceStartupFailure
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.lg) {
+            Image(systemName: "externaldrive.badge.exclamationmark")
+                .font(.system(size: 44, weight: .semibold))
+                .foregroundStyle(Color.orange)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
+                Text("Your data store couldn’t be opened")
+                    .font(.title2.weight(.bold))
+
+                Text(
+                    "AuGenda stopped before opening an empty writable store. "
+                    + "Your existing data has not been deleted."
+                )
+                .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+                Text("Diagnostic code")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(failure.diagnosticCode)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+
+            HStack(spacing: Tokens.Spacing.sm) {
+                Button("Try Again", action: retry)
+                    .buttonStyle(.borderedProminent)
+
+                ShareLink(
+                    item: failure.supportSummary,
+                    subject: Text("AuGenda persistence diagnostic")
+                ) {
+                    Label("Share Diagnostic", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(.bordered)
+            }
+
+            Text(
+                "If retry keeps failing, share the diagnostic code with support. "
+                + "Do not reinstall or erase app data unless you have a verified backup."
+            )
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        }
+        .padding(Tokens.Spacing.xl)
+        .frame(maxWidth: 560, alignment: .leading)
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -117,8 +203,10 @@ struct RootView: View {
     /// onboarding, so this stays false for them until a later launch surfaces
     /// the standalone step — that's the "second launch" path.
     @AppStorage("checkIn.preferenceOffered") private var checkInPreferenceOffered: Bool = false
+    @AppStorage("onboarding.deferredForCapacity") private var onboardingDeferredForCapacity: Bool = false
 
     @State private var showCheckInSelector = false
+    @State private var onboardingSkippedThisLaunch = false
     @State private var resumePrompt: (label: String, itemID: UUID?)? = nil
     @State private var resumeDismissTask: Task<Void, Never>? = nil
 
@@ -154,6 +242,15 @@ struct RootView: View {
                                 .foregroundColor(Color.appTextPrimary)
                             Spacer()
                             Button {
+                                var userInfo: [String: Any] = [:]
+                                if let itemID = resume.itemID {
+                                    userInfo["itemID"] = itemID.uuidString
+                                }
+                                NotificationCenter.default.post(
+                                    name: .resumeActivity,
+                                    object: nil,
+                                    userInfo: userInfo
+                                )
                                 InterruptionContext.clear()
                                 resumePrompt = nil
                                 resumeDismissTask?.cancel()
@@ -162,6 +259,7 @@ struct RootView: View {
                                     .font(Tokens.Typography.caption)
                                     .fontWeight(.semibold)
                                     .foregroundColor(Color.appAccent)
+                                    .frame(minWidth: 44, minHeight: 44)
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Resume \(resume.label)")
@@ -173,9 +271,11 @@ struct RootView: View {
                                 Image(systemName: "xmark")
                                     .font(.caption)
                                     .foregroundColor(Color.appTextSecondary)
+                                    .frame(minWidth: 44, minHeight: 44)
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Dismiss resume prompt")
+                            .accessibilityHint("Hides this prompt without changing your tasks")
                         }
                         .padding(Tokens.Spacing.base)
                         .background(Color.appAccent.opacity(0.1))
@@ -214,6 +314,13 @@ struct RootView: View {
                    profileManager.activePreferences?.showCheckInNudges != false,
                    CognitiveCheckInTracker.shouldPrompt(scenePhase: .active) {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        guard !profiles.isEmpty,
+                              firstLaunchStep == nil,
+                              !showCheckInSelector,
+                              profileManager.activePreferences?.showCheckInNudges != false,
+                              CognitiveCheckInTracker.shouldPrompt(scenePhase: .active) else {
+                            return
+                        }
                         showCheckInSelector = true
                     }
                 }
@@ -266,7 +373,8 @@ struct RootView: View {
                     // identical survival||low skip rule (they used to disagree:
                     // this branch only excluded survival).
                     firstLaunchStep = .onboarding
-                } else if onboardingCompleted && !checkInPreferenceOffered {
+                } else if !checkInPreferenceOffered
+                            && (onboardingCompleted || onboardingDeferredForCapacity) {
                     // Skipped onboarding (declared overwhelm on first launch)
                     // so never saw the in-onboarding check-in choice — offer
                     // it now, on this later launch. Also catches users from
@@ -287,18 +395,23 @@ struct RootView: View {
                         isFirstLaunch: true
                     )
                 case .onboarding:
-                    // Mark completion in the binding's set closure so
-                    // handleStepDismiss can read it correctly on the next
-                    // tick — otherwise the dismiss handler would see
-                    // !onboardingCompleted still true and re-present.
-                    // The final onboarding card carries the check-in choice,
-                    // so reaching the end counts as "offered."
                     OnboardingView(
-                        isPresented: dismissBinding(for: .onboarding) {
+                        isPresented: dismissBinding(for: .onboarding),
+                        onFinished: {
                             onboardingCompleted = true
+                            onboardingDeferredForCapacity = false
                             checkInPreferenceOffered = true
+                            onboardingSkippedThisLaunch = false
+                            UserDefaults.standard.set(Date.now, forKey: "morningSetup.lastDate")
+                        },
+                        onSkipped: {
+                            // "Not now" is not completion. Avoid immediately
+                            // reopening the sheet, but keep the tour eligible
+                            // on the next appropriate launch.
+                            onboardingSkippedThisLaunch = true
                         }
                     )
+                    .interactiveDismissDisabled()
                 case .checkInPreference:
                     CheckInPreferenceStep(
                         isPresented: dismissBinding(for: .checkInPreference) {
@@ -360,13 +473,16 @@ struct RootView: View {
 
         // Profile just created → onboarding decision based on chosen mode.
         if !onboardingCompleted {
+            guard !onboardingSkippedThisLaunch else { return }
             let mode = profileManager.activePreferences?.effectiveDensity ?? .functional
 
             // Survival + Low capacity users skip the onboarding tour — the
             // whole point of declaring overwhelm is to NOT be tour-walked.
-            // Mark complete so we never offer it again unless they reset.
+            // Record a deferral, not completion, so the tour remains eligible
+            // if capacity later improves.
             if mode == .survival || mode == .low {
-                onboardingCompleted = true
+                onboardingDeferredForCapacity = true
+                UserDefaults.standard.set(Date.now, forKey: "morningSetup.lastDate")
                 return
             }
 

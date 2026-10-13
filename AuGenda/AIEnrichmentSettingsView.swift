@@ -22,8 +22,12 @@ struct AIEnrichmentSettingsView: View {
     // Master toggle — OFF by default per spec.
     @AppStorage("ai.enabled") private var aiEnabled: Bool = false
 
-    // Active provider (rawValue). Empty until the user picks one.
-    @AppStorage("ai.activeProvider") private var activeProviderRaw: String = ""
+    // Active provider (rawValue). Defaults to on-device Apple Foundation Models.
+    @AppStorage("ai.activeProvider") private var activeProviderRaw: String = "apple-foundation"
+
+    // Backup provider fallback (macOS 27).
+    @AppStorage("ai.backupProvider") private var backupProviderRaw: String = "openai"
+    @AppStorage("ai.enableBackupFallback") private var enableBackupFallback: Bool = true
 
     // Auto-enrich new tasks on save. OFF by default even after AI enabled.
     @AppStorage("ai.autoEnrichNewTasks") private var autoEnrich: Bool = false
@@ -35,8 +39,9 @@ struct AIEnrichmentSettingsView: View {
     // Ollama-specific config (only used if Ollama is the active provider).
     @AppStorage("ai.ollama.host")  private var ollamaHost: String = "http://localhost:11434"
     @AppStorage("ai.ollama.model") private var ollamaModel: String = "llama3.1:8b"
+    @AppStorage("ai.deepseek.model") private var deepSeekModel: String = ""
 
-    // Local AI only mode — enforces $0 budget by hiding all paid providers.
+    // Local AI only mode — enforces the outbound host/provider boundary.
     @AppStorage("ai.localOnlyMode") private var localOnlyMode: Bool = false
 
     // Monthly AI budget cap (0 = unlimited)
@@ -46,6 +51,7 @@ struct AIEnrichmentSettingsView: View {
     @State private var apiKeyDraft: String = ""
     @State private var apiKeyExists: Bool = false
     @State private var testState: TestState = .idle
+    @State private var testTask: Task<Void, Never>? = nil
     @State private var showAdvancedProviders: Bool = false
     @State private var pendingProvider: AIProvider? = nil  // disclosure prompt
     @State private var showDisclosure: Bool = false
@@ -57,6 +63,9 @@ struct AIEnrichmentSettingsView: View {
     // sign-in button can update independently of the test button.
     @State private var googleSigningIn: Bool = false
     @State private var googleAuthError: String? = nil
+    @State private var googleSignedIn: Bool = false
+    @State private var usagePersistenceError: String? = nil
+    @State private var personalizationPersistenceError: String? = nil
 
     private var activeProvider: AIProvider? {
         AIProvider(rawValue: activeProviderRaw)
@@ -64,10 +73,11 @@ struct AIEnrichmentSettingsView: View {
 
     /// Providers visible when local-only mode is active.
     private var visibleProviders: [AIProvider] {
+        let releaseProviders = AIProvider.allCases.filter(\.isReleaseEnabled)
         if localOnlyMode {
-            return AIProvider.allCases.filter { $0 == .appleFoundation || $0 == .ollama }
+            return releaseProviders.filter { $0 == .appleFoundation || $0 == .ollama }
         }
-        return AIProvider.allCases
+        return releaseProviders
     }
 
     var body: some View {
@@ -87,6 +97,9 @@ struct AIEnrichmentSettingsView: View {
 
                     if provider.requiresAPIKey {
                         apiKeySection(for: provider)
+                        if provider == .deepseek {
+                            deepSeekModelSection
+                        }
                     } else if provider == .ollama {
                         ollamaConfigSection
                     } else if provider == .appleFoundation {
@@ -112,8 +125,30 @@ struct AIEnrichmentSettingsView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
-        .onAppear { syncKeyState() }
+        .onAppear {
+            if let provider = activeProvider, !provider.isReleaseEnabled {
+                activeProviderRaw = ""
+            }
+            syncKeyState()
+            googleSignedIn = GoogleOAuth.hasLocalSession
+            promptForStaleConsentIfNeeded()
+        }
+        .onChange(of: aiEnabled) { _, enabled in
+            if enabled {
+                promptForStaleConsentIfNeeded()
+            } else {
+                testTask?.cancel()
+                testTask = nil
+                testState = .idle
+            }
+        }
+        .onDisappear {
+            testTask?.cancel()
+            testTask = nil
+        }
         .onChange(of: activeProviderRaw) { _, _ in syncKeyState(); testState = .idle }
+        .onChange(of: deepSeekModel) { _, _ in testState = .idle }
+        .onChange(of: ollamaHost) { _, _ in testState = .idle }
         .onChange(of: localOnlyMode) { _, isLocal in
             if isLocal, let provider = activeProvider, provider != .appleFoundation && provider != .ollama {
                 activeProviderRaw = ""
@@ -125,13 +160,20 @@ struct AIEnrichmentSettingsView: View {
             presenting: pendingProvider
         ) { provider in
             Button("Use \(provider.displayName)") {
+                AIConsentPolicy.recordConsent(for: provider)
                 activeProviderRaw = provider.rawValue
+                pendingProvider = nil
             }
             Button("Cancel", role: .cancel) {
                 pendingProvider = nil
             }
         } message: { provider in
-            Text(provider.consentDisclosure)
+            Text(
+                provider.consentDisclosure
+                    + (provider == .ollama
+                        ? "\n\nCurrent destination: \(ollamaHost)"
+                        : "")
+            )
         }
     }
 
@@ -156,7 +198,7 @@ struct AIEnrichmentSettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Local AI only").fontWeight(.medium)
                         Text(localOnlyMode
-                             ? "On — only free, on-device or self-hosted providers."
+                             ? "On — only on-device or locally addressed user-hosted providers."
                              : "Off — all providers available.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -166,7 +208,7 @@ struct AIEnrichmentSettingsView: View {
             }
         } footer: {
             if localOnlyMode {
-                Text("Local AI only mode hides paid providers. Uses Ollama (free, self-hosted) or Apple Foundation Models (on-device). No API costs.")
+                Text("Local AI only blocks cloud providers and remote Ollama hosts at the provider boundary. Apple runs on device; Ollama must use localhost or a private/local-network address.")
             } else {
                 Text("AI enrichment auto-fills task metadata (difficulty axes, sub-tasks, time estimate) from your task title. Off by default. Even after enabling, no data leaves your device until you pick a provider AND enrich a task.")
             }
@@ -197,50 +239,65 @@ struct AIEnrichmentSettingsView: View {
             Text("Provider")
         } footer: {
             Text(localOnlyMode
-                 ? "On-device and self-hosted providers only. No cloud API costs."
-                 : "On-device and self-hosted providers never send your task data to a third-party cloud. Cloud providers require an API key, which is stored in the Keychain on this device only.")
+                 ? "On-device and locally addressed user-hosted providers only."
+                 : "Apple runs on device. Ollama sends data to the host you configure, which may be local or remote. Cloud providers send the disclosed fields to their APIs and require credentials stored in this device's Keychain.")
         }
     }
 
     private func providerRow(_ provider: AIProvider) -> some View {
-        Button {
-            // If different provider, show disclosure first.
-            if provider.rawValue != activeProviderRaw {
-                pendingProvider = provider
-                showDisclosure = true
-            }
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: provider.privacyTier.icon)
-                    .foregroundStyle(privacyTint(provider.privacyTier))
-                    .frame(width: 20)
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                // New providers and stale disclosure versions require an explicit
+                // acknowledgement before the outbound boundary permits a call.
+                if provider.rawValue != activeProviderRaw
+                    || !AIConsentPolicy.hasCurrentConsent(for: provider) {
+                    pendingProvider = provider
+                    showDisclosure = true
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: provider.privacyTier.icon)
+                        .foregroundStyle(privacyTint(provider.privacyTier))
+                        .frame(width: 20)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(provider.displayName)
-                            .foregroundStyle(.primary)
-                            .fontWeight(activeProviderRaw == provider.rawValue ? .semibold : .regular)
-                        Text(provider.privacyTier.label)
-                            .font(.caption2)
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(privacyTint(provider.privacyTier).opacity(0.15), in: Capsule())
-                            .foregroundStyle(privacyTint(provider.privacyTier))
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(provider.displayName)
+                                .foregroundStyle(.primary)
+                                .fontWeight(activeProviderRaw == provider.rawValue ? .semibold : .regular)
+                            Text(provider.privacyTier.label)
+                                .font(.caption2)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(privacyTint(provider.privacyTier).opacity(0.15), in: Capsule())
+                                .foregroundStyle(privacyTint(provider.privacyTier))
+                        }
+                        Text(provider.tagline)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    Text(provider.tagline)
+
+                    Spacer()
+
+                    if activeProviderRaw == provider.rawValue {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Color.appAccent)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .buttonStyle(.plain)
+
+            if let dataTermsURL = provider.dataTermsURL {
+                Link(destination: dataTermsURL) {
+                    Label("Review provider API data terms", systemImage: "arrow.up.right.square")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-
-                Spacer()
-
-                if activeProviderRaw == provider.rawValue {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(Color.appAccent)
-                }
+                .accessibilityHint(
+                    "Opens \(provider.displayName)'s official terms governing API data"
+                )
             }
-            .padding(.vertical, 2)
         }
-        .buttonStyle(.plain)
     }
 
     private func privacyTint(_ tier: PrivacyTier) -> Color {
@@ -280,7 +337,7 @@ struct AIEnrichmentSettingsView: View {
             }
 
             Button {
-                Task { await runTest(for: provider) }
+                startTest(for: provider)
             } label: {
                 HStack(spacing: 8) {
                     switch testState {
@@ -299,37 +356,25 @@ struct AIEnrichmentSettingsView: View {
                     }
                 }
             }
-            .disabled(!apiKeyExists)
+            .disabled(
+                !apiKeyExists
+                    && !(provider == .gemini
+                        && googleSignedIn
+                        && GoogleOAuth.isConfigured)
+            )
         } header: {
             Text("API key")
         } footer: {
-            Text("Your key is stored in the device Keychain. It is not synced to iCloud, and not visible to anyone else with access to your Apple ID. Remove it any time.")
+            if provider == .perplexity {
+                Text("Your key is stored in the device Keychain and is not synced to iCloud. Perplexity has no credential-introspection endpoint, so Test connection sends the synthetic word “Test” in a one-token chat-completions request to the configured model, which may use a minimal amount of quota. No task or profile data is included.")
+            } else {
+                Text("Your key is stored in the device Keychain. It is not synced to iCloud, and not visible to anyone else with access to your Apple ID. Remove it any time.")
+            }
         }
     }
 
-    /// Warn when the Ollama host is plain http pointed *outside* the local
-    /// network — task text (incl. neurotype + about-me) would travel
-    /// unencrypted. Loopback / .local / RFC-1918 over http is fine; remote
-    /// should use https. A warning, not a block — a power user may have a
-    /// deliberate setup. (audit S3)
     private var ollamaHostWarning: String? {
-        let trimmed = ollamaHost.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return nil }
-        guard let url = URL(string: trimmed),
-              let scheme = url.scheme?.lowercased(),
-              let host = url.host?.lowercased() else {
-            return "That doesn't look like a valid URL (e.g. http://localhost:11434)."
-        }
-        if scheme == "https" { return nil }
-        if scheme != "http"  { return "Use an http (local) or https URL." }
-        let isLocal = host == "localhost" || host == "127.0.0.1" || host == "::1"
-            || host.hasSuffix(".local")
-            || host.hasPrefix("192.168.")
-            || host.hasPrefix("10.")
-            || host.hasPrefix("172.")   // approx RFC-1918 172.16–31 range
-        return isLocal
-            ? nil
-            : "Plain http outside your local network — task text would be sent unencrypted. Use https for a remote server."
+        OllamaEndpointPolicy.warning(for: ollamaHost)
     }
 
     private var ollamaConfigSection: some View {
@@ -350,6 +395,14 @@ struct AIEnrichmentSettingsView: View {
                     .foregroundStyle(Tokens.Color.warning)
                     .accessibilityLabel("Warning: \(warning)")
             }
+            if !AIConsentPolicy.hasCurrentConsent(for: .ollama) {
+                Label(
+                    "This server destination is not approved. Re-select Ollama above and review the disclosure before connecting.",
+                    systemImage: "lock.trianglebadge.exclamationmark"
+                )
+                .font(.caption)
+                .foregroundStyle(Tokens.Color.warning)
+            }
             HStack {
                 Text("Model")
                 Spacer()
@@ -361,7 +414,7 @@ struct AIEnrichmentSettingsView: View {
                     .autocorrectionDisabled()
             }
             Button {
-                Task { await runTest(for: .ollama) }
+                startTest(for: .ollama)
             } label: {
                 HStack(spacing: 8) {
                     switch testState {
@@ -375,7 +428,34 @@ struct AIEnrichmentSettingsView: View {
         } header: {
             Text("Ollama server")
         } footer: {
-            Text("Point this at your Ollama server. On a Mac running Ollama locally, use http://localhost:11434. From an iPhone on the same Wi-Fi, use http://<mac-name>.local:11434.")
+            Text("Point this at your Ollama server. Local HTTP is allowed for localhost, .local, link-local, and RFC 1918 addresses. Remote hosts require HTTPS and are blocked while Local AI only is on.")
+        }
+    }
+
+    private var deepSeekModelSection: some View {
+        Section {
+            HStack {
+                Text("Model ID")
+                Spacer()
+                TextField("Required", text: $deepSeekModel)
+                    .multilineTextAlignment(.trailing)
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    #endif
+                    .autocorrectionDisabled()
+            }
+            if DeepSeekEnricher.configuredModel(from: deepSeekModel) == nil {
+                Label(
+                    "Enter a current model ID. The retired deepseek-chat and deepseek-reasoner aliases are blocked.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(Tokens.Color.warning)
+            }
+        } header: {
+            Text("DeepSeek model")
+        } footer: {
+            Text("AuGenda verifies this ID against DeepSeek's models endpoint before task content is sent.")
         }
     }
 
@@ -383,11 +463,31 @@ struct AIEnrichmentSettingsView: View {
         Section {
             HStack(spacing: 10) {
                 Image(systemName: "lock.shield.fill").foregroundStyle(.green)
-                Text("On-device model. No API key, no setup.")
+                Text("On-device model. No API key, no setup. Default engine.")
                     .font(.subheadline)
             }
+
+            HStack {
+                Label("Siri AI Delegation", systemImage: "waveform")
+                Spacer()
+                Text("Active via App Intents")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if !localOnlyMode {
+                Toggle(isOn: $enableBackupFallback) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("ChatGPT (OpenAI) Backup").fontWeight(.medium)
+                        Text("Automatic cloud fallback if on-device model trips guardrails or is busy.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .tint(Color.appAccent)
+            }
+
             Button {
-                Task { await runTest(for: .appleFoundation) }
+                startTest(for: .appleFoundation)
             } label: {
                 HStack(spacing: 8) {
                     switch testState {
@@ -399,9 +499,9 @@ struct AIEnrichmentSettingsView: View {
                 }
             }
         } header: {
-            Text("Apple Foundation Models")
+            Text("Apple Foundation Models (macOS 27)")
         } footer: {
-            Text("Requires Apple Intelligence to be enabled on this device. Supported devices: iPhone 15 Pro and later, Apple silicon Macs, Apple Watch Series 10 and later.")
+            Text("Requires Apple Intelligence to be enabled on this device. Siri AI can trigger task actions through native App Intents. ChatGPT backup provides optional cloud fallback when configured.")
         }
     }
 
@@ -431,6 +531,14 @@ struct AIEnrichmentSettingsView: View {
 
     private var usageSection: some View {
         Section {
+            if !ledger.persistenceIsHealthy {
+                Label(
+                    "Usage history could not be trusted. A configured spend cap is paused until you clear usage history and recovery succeeds.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(Tokens.Color.warning)
+            }
             HStack {
                 Text("Tokens this month")
                 Spacer()
@@ -470,14 +578,21 @@ struct AIEnrichmentSettingsView: View {
                 }
             }
             Button(role: .destructive) {
-                ledger.clear()
+                usagePersistenceError = ledger.clear()
+                    ? nil
+                    : "Usage history could not be fully cleared. Try again before using a spend cap."
             } label: {
                 Label("Clear usage history", systemImage: "trash")
+            }
+            if let usagePersistenceError {
+                Text(usagePersistenceError)
+                    .font(.caption)
+                    .foregroundStyle(Tokens.Color.warning)
             }
         } header: {
             Text("Usage")
         } footer: {
-            Text("Estimates use published list prices. Apple Foundation and Ollama are free; cloud usage is rounded up.")
+            Text("Estimates use published list prices and provider-reported token counts. Apple Foundation and Ollama are free. If usage cannot be read or written, a configured spend cap fails closed.")
         }
     }
 
@@ -495,23 +610,37 @@ struct AIEnrichmentSettingsView: View {
         Section {
             HStack(spacing: 10) {
                 Image(systemName: "person.crop.circle.badge.checkmark")
-                    .foregroundStyle(GoogleOAuth.isSignedIn ? .green : .secondary)
+                    .foregroundStyle(googleSignedIn ? .green : .secondary)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(GoogleOAuth.isSignedIn ? "Signed in with Google" : "Not signed in")
+                    Text(
+                        googleSignedIn
+                            ? (GoogleOAuth.isConfigured
+                                ? "Signed in with Google"
+                                : "Google authorization stored")
+                            : "Not signed in"
+                    )
                         .font(.subheadline).fontWeight(.medium)
-                    Text(GoogleOAuth.isSignedIn
-                         ? "Gemini calls are made on your Google account."
-                         : "Sign in to use your Google account quota instead of an API key.")
+                    Text(
+                        googleSignedIn
+                            ? (GoogleOAuth.isConfigured
+                                ? "Gemini calls are made on your Google account."
+                                : "This build's OAuth configuration is invalid, but you can still remove the stored local token.")
+                            : "Sign in to use your Google account quota instead of an API key."
+                    )
                     .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
             }
 
-            if GoogleOAuth.isSignedIn {
+            if googleSignedIn {
                 Button(role: .destructive) {
-                    OAuthCoordinator.shared.signOut(provider: .gemini)
-                    // Trigger re-render
-                    googleAuthError = nil
+                    let removed = OAuthCoordinator.shared.signOut(provider: .gemini)
+                    if removed {
+                        googleSignedIn = false
+                    }
+                    googleAuthError = removed
+                        ? nil
+                        : "Couldn't remove the local Google token. Try signing out again."
                 } label: {
                     Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
                 }
@@ -538,13 +667,13 @@ struct AIEnrichmentSettingsView: View {
             }
 
             if !GoogleOAuth.isConfigured {
-                Text("⚠️ Google OAuth client not configured for this build. See GoogleOAuth.swift TestFlight checklist. The API-key path below still works.")
+                Text("Google OAuth is not configured for this build. The API-key path below still works.")
                     .font(.caption).foregroundStyle(.orange)
             }
         } header: {
             Text("Google account")
         } footer: {
-            Text("OAuth signs Gemini calls with your Google account, so usage counts against your account's quota and the AI can be (in future) connected to your other Google data. Tokens are stored in your device Keychain — not synced.")
+            Text("OAuth authorizes only the configured Generative Language API scope. It does not grant AuGenda access to Gmail, Drive, Calendar, or other Google data. Tokens are stored in this device's Keychain and are not synced. Sign out removes only the local token; revoke AuGenda's grant separately in Google Account → Security → Third-party access.")
         }
     }
 
@@ -553,8 +682,8 @@ struct AIEnrichmentSettingsView: View {
         googleAuthError = nil
         defer { googleSigningIn = false }
         do {
-            _ = try await OAuthCoordinator.shared.authorize(config: GoogleOAuth.providerConfig)
-            // Successful — keychain has tokens. View re-renders via state.
+            _ = try await GoogleOAuth.authorize()
+            googleSignedIn = true
         } catch let error as OAuthError {
             googleAuthError = error.errorDescription
         } catch {
@@ -624,6 +753,14 @@ struct AIEnrichmentSettingsView: View {
 
     private var personalizationSection: some View {
         Section {
+            if !personalization.persistenceIsHealthy {
+                Label(
+                    "Stored AI memory could not be trusted. It will not be overwritten until you clear memory or reset personalization successfully.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(Tokens.Color.warning)
+            }
             // About-me note
             VStack(alignment: .leading, spacing: 6) {
                 Text("About you")
@@ -689,25 +826,44 @@ struct AIEnrichmentSettingsView: View {
                         .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 }
                 Button(role: .destructive) {
-                    personalization.clearMemory()
+                    personalizationPersistenceError = personalization.clearMemory()
+                        ? nil
+                        : "Recent AI memory could not be fully cleared. Try again."
                 } label: {
                     Label("Clear memory", systemImage: "eraser")
                 }
             }
 
             Button(role: .destructive) {
-                personalization.resetAll()
+                personalizationPersistenceError = personalization.resetAll()
+                    ? nil
+                    : "Personalization could not be fully reset. Try again."
             } label: {
                 Label("Reset personalization", systemImage: "arrow.counterclockwise")
+            }
+            if let personalizationPersistenceError {
+                Text(personalizationPersistenceError)
+                    .font(.caption)
+                    .foregroundStyle(Tokens.Color.warning)
             }
         } header: {
             Text("Personalization")
         } footer: {
-            Text("Personalization data lives on this device only. About-you text, tone, and memory are sent to your active AI provider on each enrichment call, never to Apple or anyone else. Erasing personalization here removes it from this device.")
+            Text("Personalization is stored on this device. When enabled, it is included in enrichment input: Apple processes it on device, Ollama sends it to your configured host, and cloud providers receive it under their own terms. Reset removes the local copy.")
         }
     }
 
     // MARK: - Actions
+
+    private func promptForStaleConsentIfNeeded() {
+        guard aiEnabled,
+              let provider = activeProvider,
+              !AIConsentPolicy.hasCurrentConsent(for: provider) else {
+            return
+        }
+        pendingProvider = provider
+        showDisclosure = true
+    }
 
     private func syncKeyState() {
         guard let provider = activeProvider else {
@@ -739,6 +895,13 @@ struct AIEnrichmentSettingsView: View {
         }
     }
 
+    private func startTest(for provider: AIProvider) {
+        testTask?.cancel()
+        testTask = Task {
+            await runTest(for: provider)
+        }
+    }
+
     private func runTest(for provider: AIProvider) async {
         testState = .running
         guard let enricher = AIEnricherRegistry.enricher(for: provider) else {
@@ -746,10 +909,22 @@ struct AIEnrichmentSettingsView: View {
             return
         }
         let available = await enricher.isAvailable()
+        guard !Task.isCancelled else {
+            testState = .idle
+            return
+        }
+        if provider == .gemini {
+            googleSignedIn = GoogleOAuth.hasLocalSession
+        }
         if available {
             testState = .ok
         } else {
-            testState = .failed(message: provider.requiresAPIKey ? "Not configured" : "Not available")
+            if provider == .deepseek,
+               DeepSeekEnricher.configuredModel(from: deepSeekModel) == nil {
+                testState = .failed(message: "Model required")
+            } else {
+                testState = .failed(message: "Couldn’t authenticate or connect")
+            }
         }
     }
 

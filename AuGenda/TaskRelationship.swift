@@ -69,6 +69,13 @@ final class TaskRelationship {
 }
 
 extension AgendaTask {
+    /// Authoritative actionability check for any surface that has a model
+    /// context. The context-free property covers lifecycle state; this method
+    /// additionally enforces persisted blocking relationships.
+    func isActionable(in context: ModelContext) -> Bool {
+        isActionable && !isBlocked(in: context)
+    }
+
     func blockingTaskIDs(in context: ModelContext) -> [UUID] {
         let taskID = self.clientID
         let blocksRaw = "blocks"
@@ -87,5 +94,116 @@ extension AgendaTask {
             predicate: #Predicate { $0.targetTaskID == taskID && ($0.typeRaw == blocksRaw || $0.typeRaw == followsRaw) }
         )
         return (try? context.fetch(descriptor))?.map { $0.sourceTaskID } ?? []
+    }
+}
+
+enum TaskRelationshipError: LocalizedError {
+    case missingTask
+    case selfReference
+    case duplicate
+    case cycle
+
+    var errorDescription: String? {
+        switch self {
+        case .missingTask: return "Both tasks must exist before they can be linked."
+        case .selfReference: return "A task cannot depend on itself."
+        case .duplicate: return "That task relationship already exists."
+        case .cycle: return "That dependency would create a cycle."
+        }
+    }
+}
+
+/// The only supported write boundary for task relationships. Reads remain
+/// available on `AgendaTask`, while creation enforces referential integrity,
+/// uniqueness, direction, and acyclic blocking dependencies.
+@MainActor
+enum TaskRelationshipService {
+
+    @discardableResult
+    static func create(
+        sourceTaskID: UUID,
+        targetTaskID: UUID,
+        type: TaskRelationshipType,
+        in context: ModelContext
+    ) throws -> TaskRelationship {
+        guard sourceTaskID != targetTaskID else {
+            throw TaskRelationshipError.selfReference
+        }
+
+        let tasks = try context.fetch(FetchDescriptor<AgendaTask>())
+        let taskIDs = Set(tasks.map(\.clientID))
+        guard taskIDs.contains(sourceTaskID), taskIDs.contains(targetTaskID) else {
+            throw TaskRelationshipError.missingTask
+        }
+
+        let relationships = try context.fetch(FetchDescriptor<TaskRelationship>())
+        guard !relationships.contains(where: {
+            $0.sourceTaskID == sourceTaskID
+                && $0.targetTaskID == targetTaskID
+                && $0.type == type
+        }) else {
+            throw TaskRelationshipError.duplicate
+        }
+
+        if type == .blocks || type == .follows,
+           createsBlockingCycle(
+               sourceTaskID: sourceTaskID,
+               targetTaskID: targetTaskID,
+               existing: relationships
+           ) {
+            throw TaskRelationshipError.cycle
+        }
+
+        let relationship = TaskRelationship(
+            sourceTaskID: sourceTaskID,
+            targetTaskID: targetTaskID,
+            type: type
+        )
+        context.insert(relationship)
+        do {
+            try context.save()
+            return relationship
+        } catch {
+            context.rollback()
+            throw error
+        }
+    }
+
+    static func deleteReferences(
+        to taskID: UUID,
+        in context: ModelContext
+    ) throws {
+        let relationships = try context.fetch(FetchDescriptor<TaskRelationship>())
+        for relationship in relationships
+        where relationship.sourceTaskID == taskID || relationship.targetTaskID == taskID {
+            context.delete(relationship)
+        }
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            throw error
+        }
+    }
+
+    private static func createsBlockingCycle(
+        sourceTaskID: UUID,
+        targetTaskID: UUID,
+        existing: [TaskRelationship]
+    ) -> Bool {
+        var adjacency: [UUID: [UUID]] = [:]
+        for relationship in existing where relationship.isBlocking {
+            adjacency[relationship.sourceTaskID, default: []].append(relationship.targetTaskID)
+        }
+        adjacency[sourceTaskID, default: []].append(targetTaskID)
+
+        var stack = [targetTaskID]
+        var visited = Set<UUID>()
+        while let current = stack.popLast() {
+            if current == sourceTaskID { return true }
+            guard visited.insert(current).inserted else { continue }
+            stack.append(contentsOf: adjacency[current] ?? [])
+        }
+        return false
     }
 }
