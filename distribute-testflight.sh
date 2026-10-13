@@ -47,4 +47,17 @@ if command -v xcodebuild >/dev/null 2>&1 && xcode-select -p | grep -q "Xcode.app
 
     echo "=== Packaging Complete ==="
     echo "Exported package located at: ${EXPORT_PATH}"
+
+    # 3. Direct App Store Connect API upload
+    IPA_FILE=$(find "${EXPORT_PATH}" -name "*.ipa" 2>/dev/null | head -n 1)
+    if [ -n "${IPA_FILE}" ] && [ -f "${IPA_FILE}" ]; then
+        echo "Uploading ${IPA_FILE} directly to TestFlight via App Store Connect API..."
+        python3 "${PROJECT_DIR}/../../Governance/scripts/asc_client.py" upload \
+            --app-id "6822482233" \
+            --file "${IPA_FILE}" \
+            --version "1.0.0" \
+            --build "1" \
+            --platform "IOS"
+    fi
 fi
+
