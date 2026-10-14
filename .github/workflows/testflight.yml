@@ -81,7 +81,9 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
-          pip3 install pyjwt cryptography requests
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip pyjwt cryptography requests
           IPA_FILE=$(find build/TestFlight -name "*.ipa" | head -n 1)
           if [ -n "$IPA_FILE" ]; then
             python3 scripts/asc_client.py upload \
