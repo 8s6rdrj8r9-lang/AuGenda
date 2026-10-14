@@ -60,39 +60,33 @@ jobs:
             -destination "generic/platform=iOS" \
             -archivePath build/AuGenda.xcarchive \
             -allowProvisioningUpdates \
-            IPHONEOS_DEPLOYMENT_TARGET=18.0 \
-            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8" \
-            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
-            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" 2>&1 | tee xcodebuild-archive.log || (tail -n 120 xcodebuild-archive.log && exit 1)
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8 \
+            -authenticationKeyID ${{ secrets.ASC_KEY_ID }} \
+            -authenticationKeyIssuerID ${{ secrets.ASC_ISSUER_ID }}
 
-      - name: Export for TestFlight
+      - name: Export Binary Package
         run: |
           xcodebuild -exportArchive \
             -archivePath build/AuGenda.xcarchive \
             -exportPath build/TestFlight \
+            -exportOptionsPlist ExportOptions-Export.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8" \
+            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}"
+
+      - name: Save Binary to GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: AuGenda-iOS-Package
+          path: build/TestFlight/
+
+      - name: Deploy to TestFlight
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath build/AuGenda.xcarchive \
             -exportOptionsPlist ExportOptions-TestFlight.plist \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8" \
             -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
-            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" 2>&1 | tee xcodebuild-export.log || (tail -n 120 xcodebuild-export.log && exit 1)
-
-      - name: Upload Binary via App Store Connect REST API
-        env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-        run: |
-          python3 -m venv .venv
-          source .venv/bin/activate
-          pip install --upgrade pip pyjwt cryptography requests
-          IPA_FILE=$(find build/TestFlight -name "*.ipa" | head -n 1)
-          if [ -n "$IPA_FILE" ]; then
-            python3 scripts/asc_client.py upload \
-              --app-id "6822482233" \
-              --file "$IPA_FILE" \
-              --version "1.0.0" \
-              --build "${{ github.run_number }}" \
-              --platform "IOS"
-          else
-            echo "Error: No .ipa found in build/TestFlight"
-            exit 1
-          fi
+            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" 2>&1 | tee xcodebuild-upload.log || (tail -n 120 xcodebuild-upload.log && exit 1)
