@@ -62,10 +62,10 @@ jobs:
             -configuration Release \
             -destination "generic/platform=iOS" \
             -derivedDataPath "$RUNNER_TEMP/AuGenda-Build" \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
             build 2>&1 | tee xcodebuild.log || {
               echo "=== XCODEBUILD FAILED ==="
               tail -n 120 xcodebuild.log
