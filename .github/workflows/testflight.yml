@@ -16,6 +16,8 @@ jobs:
     name: Build and Deploy to TestFlight
     runs-on: macos-15
     timeout-minutes: 60
+    permissions:
+      contents: write
 
     steps:
       - name: Check out repository
@@ -103,3 +105,16 @@ jobs:
         with:
           name: AuGenda-Build-Log
           path: xcodebuild.log
+
+      - name: Publish Diagnostic Log to Diagnostics Branch
+        if: always()
+        run: |
+          if [ -f xcodebuild.log ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git checkout -B diagnostics
+            cp xcodebuild.log diagnostic_xcodebuild.log
+            git add diagnostic_xcodebuild.log
+            git commit -m "ci: update diagnostic xcodebuild log [skip ci]" || true
+            git push -f origin diagnostics || true
+          fi
