@@ -68,18 +68,14 @@ jobs:
       - name: Package .ipa for Sideloading & TestFlight
         run: |
           mkdir -p build/TestFlight/Payload
-          APP_PATH=$(find build/AuGenda.xcarchive/Products/Applications -maxdepth 1 -name "*.app" | head -n 1)
-          echo "Target App Path: $APP_PATH"
-          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
-            echo "Error: No .app bundle found in build/AuGenda.xcarchive/Products/Applications"
-            find build/AuGenda.xcarchive -type d -name "*.app"
-            exit 1
+          APP_PATH=$(find build/AuGenda.xcarchive -name "AuGenda.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH=$(find build/AuGenda.xcarchive -name "*.app" -type d | head -n 1)
           fi
+          echo "Target App Path: $APP_PATH"
           cp -R "$APP_PATH" build/TestFlight/Payload/
-          cd build/TestFlight
-          zip -qr AuGenda.ipa Payload
-          rm -rf Payload
-          ls -la AuGenda.ipa
+          (cd build/TestFlight && zip -qr AuGenda.ipa Payload && rm -rf Payload)
+          ls -lh build/TestFlight/AuGenda.ipa
 
       - name: Save Binary to GitHub Artifacts (Downloadable .ipa)
         uses: actions/upload-artifact@v4
