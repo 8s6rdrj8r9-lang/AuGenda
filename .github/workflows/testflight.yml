@@ -60,9 +60,10 @@ jobs:
             -destination "generic/platform=iOS" \
             -archivePath build/AuGenda.xcarchive \
             -allowProvisioningUpdates \
-            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8 \
-            -authenticationKeyID ${{ secrets.ASC_KEY_ID }} \
-            -authenticationKeyIssuerID ${{ secrets.ASC_ISSUER_ID }}
+            IPHONEOS_DEPLOYMENT_TARGET=18.0 \
+            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8" \
+            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" 2>&1 | tee xcodebuild-archive.log || (tail -n 120 xcodebuild-archive.log && exit 1)
 
       - name: Export Binary Package
         run: |
