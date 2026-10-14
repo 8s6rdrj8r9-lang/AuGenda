@@ -50,50 +50,33 @@ jobs:
           echo "$ASC_KEY_CONTENT" > ~/.private_keys/AuthKey_${ASC_KEY_ID}.p8
           chmod 600 ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8 ~/.private_keys/AuthKey_${ASC_KEY_ID}.p8
 
-      - name: Archive AuGenda for Release
+      - name: Build Release App for iOS
         run: |
-          mkdir -p build
-          xcodebuild archive \
+          mkdir -p build/TestFlight
+          xcodebuild \
             -project AuGenda.xcodeproj \
             -scheme AuGenda \
             -configuration Release \
             -destination "generic/platform=iOS" \
-            -archivePath "$GITHUB_WORKSPACE/build/AuGenda.xcarchive" \
-            -allowProvisioningUpdates \
+            -derivedDataPath "$RUNNER_TEMP/AuGenda-Build" \
             IPHONEOS_DEPLOYMENT_TARGET=18.0 \
-            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8" \
-            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
-            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" 2>&1 | tee xcodebuild-archive.log || (tail -n 120 xcodebuild-archive.log && exit 1)
+            CODE_SIGNING_ALLOWED=NO \
+            build
 
-      - name: Package .ipa for Sideloading & TestFlight
+      - name: Package .ipa for 7-Day Sideloading
         run: |
-          set +e
           mkdir -p build/TestFlight/Payload
-          if [ -d "$GITHUB_WORKSPACE/build/AuGenda.xcarchive/Products/Applications/AuGenda.app" ]; then
-            APP_PATH="$GITHUB_WORKSPACE/build/AuGenda.xcarchive/Products/Applications/AuGenda.app"
-          else
-            APP_PATH=$(find "$GITHUB_WORKSPACE" -type d -name "AuGenda.app" | head -n 1)
-          fi
-          echo "Selected App Path: $APP_PATH"
+          APP_PATH="$RUNNER_TEMP/AuGenda-Build/Build/Products/Release-iphoneos/AuGenda.app"
+          echo "Packaging from: $APP_PATH"
           cp -R "$APP_PATH" build/TestFlight/Payload/
           cd build/TestFlight
           zip -qr AuGenda.ipa Payload
           rm -rf Payload
           ls -lh AuGenda.ipa
+          echo "IPA Size: $(stat -f%z AuGenda.ipa) bytes"
 
-      - name: Save Binary to GitHub Artifacts (Downloadable .ipa)
+      - name: Upload AuGenda.ipa to GitHub Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: AuGenda-iOS-Package
+          name: AuGenda-iOS-ipa
           path: build/TestFlight/AuGenda.ipa
-
-      - name: Deploy to TestFlight (Optional)
-        continue-on-error: true
-        run: |
-          xcodebuild -exportArchive \
-            -archivePath build/AuGenda.xcarchive \
-            -exportOptionsPlist ExportOptions-TestFlight.plist \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8" \
-            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
-            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" 2>&1 | tee xcodebuild-upload.log || echo "TestFlight upload skipped or requires account billing resolution."
