@@ -46,11 +46,17 @@ class AppStoreConnectClient:
         self.key_id = key_id or os.environ.get("ASC_KEY_ID", DEFAULT_KEY_ID)
         self.issuer_id = issuer_id or os.environ.get("ASC_ISSUER_ID", DEFAULT_ISSUER_ID)
         
+        search_paths = [
+            Path.home() / ".appstoreconnect" / "private_keys" / f"AuthKey_{self.key_id}.p8",
+            Path.home() / ".private_keys" / f"AuthKey_{self.key_id}.p8",
+            Path.home() / "Downloads" / f"AuthKey_{self.key_id}.p8",
+        ]
+        
         resolved_path = None
         if key_path and Path(key_path).exists():
             resolved_path = Path(key_path)
         else:
-            for p in DEFAULT_KEY_PATHS:
+            for p in search_paths:
                 if p.exists():
                     resolved_path = p
                     break
