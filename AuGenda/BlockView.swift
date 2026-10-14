@@ -241,7 +241,7 @@ final class BlockManager: NSObject, ObservableObject, CLLocationManagerDelegate 
     }
 
     private func fetchWeather(for location: CLLocation) {
-        Swift.Task {
+        _Concurrency.Task {
             do {
                 let weather = try await weatherService.weather(for: location)
                 let suggestions = buildSuggestions(from: weather)
@@ -473,21 +473,21 @@ final class BlockManager: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.first else { return }
-        Swift.Task { @MainActor in
+        _Concurrency.Task { @MainActor in
             self.lastKnownLocation = location
             self.fetchWeather(for: location)
         }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        Swift.Task { @MainActor in
+        _Concurrency.Task { @MainActor in
             self.isLoadingWeather = false
             logger.error("Location error: \(error.localizedDescription, privacy: .public)")
         }
     }
 
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        Swift.Task { @MainActor in
+        _Concurrency.Task { @MainActor in
             let isAuthorized: Bool
             #if os(iOS)
             isAuthorized = manager.authorizationStatus == .authorizedWhenInUse ||

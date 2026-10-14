@@ -36,6 +36,7 @@ struct NDCopy {
         }
     }
 
+    @MainActor
     static func from(_ profileManager: ActiveProfileManager) -> NDCopy {
         NDCopy(style: profileManager.activePreferences?.taskLanguageStyle ?? .standard)
     }
@@ -222,7 +223,7 @@ struct ContentView: View {
         watchManager.modelContext = modelContext
         watchManager.sendSyncSnapshot()
         #endif
-        Swift.Task {
+        _Concurrency.Task {
             await notificationManager.refreshAuthorizationStatus()
         }
     }

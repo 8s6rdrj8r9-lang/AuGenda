@@ -44,11 +44,11 @@ enum ProfileDeletionService {
         let inboxItems = try context.fetch(FetchDescriptor<InboxItem>())
         let sessions = try context.fetch(FetchDescriptor<FocusSession>())
 
-        let ownedCount =
-            agendaItems.filter { $0.assignedToProfileID.map(profileIDs.contains) == true }.count
-            + tasks.filter { $0.assignedToProfileID.map(profileIDs.contains) == true }.count
-            + inboxItems.filter { $0.assignedToProfileID.map(profileIDs.contains) == true }.count
-            + sessions.filter { $0.profileID.map(profileIDs.contains) == true }.count
+        let ownedAgenda = agendaItems.filter { $0.assignedToProfileID.map(profileIDs.contains) == true }.count
+        let ownedTasks = tasks.filter { $0.assignedToProfileID.map(profileIDs.contains) == true }.count
+        let ownedInbox = inboxItems.filter { $0.assignedToProfileID.map(profileIDs.contains) == true }.count
+        let ownedSessions = sessions.filter { $0.profileID.map(profileIDs.contains) == true }.count
+        let ownedCount = ownedAgenda + ownedTasks + ownedInbox + ownedSessions
         guard ownedCount == 0 else {
             throw ProfileDeletionError.ownsRecords(ownedCount)
         }

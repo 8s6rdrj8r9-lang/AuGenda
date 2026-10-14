@@ -534,18 +534,29 @@ enum TaskExporter {
                 t.completedAt.map { iso.string(from: $0) } ?? "",
                 t.isDeferredUntil.map { iso.string(from: $0) } ?? ""
             ]
-            row.append(contentsOf: [
-                String(t.isAbandoned ?? false),
-                t.abandonedAt.map { iso.string(from: $0) } ?? "",
-                csvEscape(t.abandonReason ?? ""),
-                String(t.sensoryLoad ?? 0),
-                String(t.socialLoad ?? 0),
-                String(t.initiationCost ?? 0),
-                String(t.specialInterest ?? false),
-                String(t.excludeFromAI ?? false),
-                String(t.sortOrder ?? 0),
-                csvEscape(t.recurrenceRule ?? "none"),
-            ])
+            let abandonedStr: String = String(t.isAbandoned ?? false)
+            let abandonedAtStr: String = t.abandonedAt.map { iso.string(from: $0) } ?? ""
+            let abandonReasonStr: String = csvEscape(t.abandonReason ?? "")
+            let sensoryStr: String = String(t.sensoryLoad ?? 0)
+            let socialStr: String = String(t.socialLoad ?? 0)
+            let initiationStr: String = String(t.initiationCost ?? 0)
+            let specialInterestStr: String = String(t.specialInterest ?? false)
+            let excludeFromAIStr: String = String(t.excludeFromAI ?? false)
+            let sortOrderStr: String = String(t.sortOrder ?? 0)
+            let recurrenceRuleStr: String = csvEscape(t.recurrenceRule ?? "none")
+            let part2: [String] = [
+                abandonedStr,
+                abandonedAtStr,
+                abandonReasonStr,
+                sensoryStr,
+                socialStr,
+                initiationStr,
+                specialInterestStr,
+                excludeFromAIStr,
+                sortOrderStr,
+                recurrenceRuleStr
+            ]
+            row.append(contentsOf: part2)
             row.append(contentsOf: [
                 t.recurrenceParentID?.uuidString ?? "",
                 t.assignedToProfileID?.uuidString ?? "",
