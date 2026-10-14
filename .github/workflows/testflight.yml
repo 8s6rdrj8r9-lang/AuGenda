@@ -53,21 +53,37 @@ jobs:
       - name: Build Release App for iOS
         run: |
           mkdir -p build/TestFlight
+          set -o pipefail
           xcodebuild \
             -project AuGenda.xcodeproj \
             -scheme AuGenda \
             -configuration Release \
             -destination "generic/platform=iOS" \
             -derivedDataPath "$RUNNER_TEMP/AuGenda-Build" \
-            IPHONEOS_DEPLOYMENT_TARGET=18.0 \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            build 2>&1 | tee xcodebuild.log || {
+              echo "=== XCODEBUILD FAILED ==="
+              tail -n 120 xcodebuild.log
+              exit 1
+            }
 
       - name: Package .ipa for 7-Day Sideloading
         run: |
+          set -e
           mkdir -p build/TestFlight/Payload
-          APP_PATH="$RUNNER_TEMP/AuGenda-Build/Build/Products/Release-iphoneos/AuGenda.app"
-          echo "Packaging from: $APP_PATH"
+          APP_PATH=$(find "$RUNNER_TEMP/AuGenda-Build" -name "AuGenda.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH=$(find . -name "AuGenda.app" -type d | head -n 1)
+          fi
+          echo "Found AuGenda.app at: $APP_PATH"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "Error: AuGenda.app was not found!"
+            find "$RUNNER_TEMP" -maxdepth 5 || true
+            exit 1
+          fi
           cp -R "$APP_PATH" build/TestFlight/Payload/
           cd build/TestFlight
           zip -qr AuGenda.ipa Payload
@@ -80,3 +96,10 @@ jobs:
         with:
           name: AuGenda-iOS-ipa
           path: build/TestFlight/AuGenda.ipa
+
+      - name: Upload Build Log Artifact (Diagnostic)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AuGenda-Build-Log
+          path: xcodebuild.log
