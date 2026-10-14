@@ -1,0 +1,95 @@
+name: TestFlight Distribution
+
+on:
+  push:
+    branches:
+      - testflight
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: testflight-augenda-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  distribute:
+    name: Build and Deploy to TestFlight
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Apple Distribution Certificate
+        env:
+          P12_BASE64: ${{ secrets.ASC_CERTIFICATE_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.ASC_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -n "$P12_BASE64" ]; then
+            echo "Installing Apple Distribution Certificate into temporary keychain..."
+            KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain-db
+            KEYCHAIN_PASSWORD=temporary-build-password
+            security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+            security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+            security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+            echo "$P12_BASE64" | base64 --decode > $RUNNER_TEMP/cert.p12
+            security import $RUNNER_TEMP/cert.p12 -k "$KEYCHAIN_PATH" -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+            rm -f $RUNNER_TEMP/cert.p12
+          fi
+
+      - name: Set up App Store Connect API Key
+        env:
+          ASC_KEY_CONTENT: ${{ secrets.ASC_PRIVATE_KEY }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys ~/.private_keys
+          echo "$ASC_KEY_CONTENT" > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          echo "$ASC_KEY_CONTENT" > ~/.private_keys/AuthKey_${ASC_KEY_ID}.p8
+          chmod 600 ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8 ~/.private_keys/AuthKey_${ASC_KEY_ID}.p8
+
+      - name: Archive AuGenda for Release
+        run: |
+          mkdir -p build
+          xcodebuild archive \
+            -project AuGenda.xcodeproj \
+            -scheme AuGenda \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath build/AuGenda.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8 \
+            -authenticationKeyID ${{ secrets.ASC_KEY_ID }} \
+            -authenticationKeyIssuerID ${{ secrets.ASC_ISSUER_ID }}
+
+      - name: Export for TestFlight
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath build/AuGenda.xcarchive \
+            -exportPath build/TestFlight \
+            -exportOptionsPlist ExportOptions-TestFlight.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8 \
+            -authenticationKeyID ${{ secrets.ASC_KEY_ID }} \
+            -authenticationKeyIssuerID ${{ secrets.ASC_ISSUER_ID }}
+
+      - name: Upload Binary via App Store Connect REST API
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          pip3 install pyjwt cryptography requests
+          IPA_FILE=$(find build/TestFlight -name "*.ipa" | head -n 1)
+          if [ -n "$IPA_FILE" ]; then
+            python3 scripts/asc_client.py upload \
+              --app-id "6822482233" \
+              --file "$IPA_FILE" \
+              --version "1.0.0" \
+              --build "${{ github.run_number }}" \
+              --platform "IOS"
+          else
+            echo "Error: No .ipa found in build/TestFlight"
+            exit 1
+          fi
