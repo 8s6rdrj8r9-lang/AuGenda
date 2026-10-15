@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+      - active-dev
+      - 'codex/**'
 
 permissions:
   contents: read

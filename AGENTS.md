@@ -217,7 +217,7 @@ Main app domains (all in `AuGenda/`):
 
 ## CI / deployment
 
-`.github/workflows/ci.yml` (macos-26 runner) on every PR and push to `main`:
+`.github/workflows/ci.yml` (macos-26 runner) on every PR and push to `main`, `active-dev`, or `codex/**`:
 repo hygiene checks (no tracked `xcuserdata`, no scratch audit files at root,
 `plutil -lint` on all plists/entitlements/privacy manifests/pbxproj), macOS
 unit tests with coverage floor, an iOS onboarding UI smoke test, Release builds

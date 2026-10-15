@@ -760,3 +760,7 @@ dedicated stores take precedence. iOS store placement is unchanged.
 - New tasks start with a title and optional-details toggle; editing opens details. Hidden fields retain their existing defaults and values. Review labels collapsed difficulty Optional, or Suggested when AI suggestions exist; expanded scores are estimates.
 - Focus duration can be adjusted locally for the session (5–480 minutes), including accepting the historical suggestion, without changing profile defaults. Settings explains the Today layout in user-facing terms and distinguishes AI setup needed from enabled with a provider.
 - Validation: changed Swift files passed syntax parsing on 2026-10-15. Full build, unit tests, and rendered interaction checks are pending: this machine has Command Line Tools but no full Xcode installation. The previously inspected installed app does not contain these edits.
+
+### GitHub validation routing — 2026-10-15
+
+The CI workflow now runs on pushes to `active-dev` (the remote default branch), `main`, and `codex/**` work branches, as well as pull requests. This allows branch builds without requiring pull-request creation access. The separate TestFlight workflow is unchanged.
