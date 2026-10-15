@@ -73,7 +73,7 @@ jobs:
               -print
           )
           while IFS= read -r file; do
-            plutil -lint "$file"
+            jq empty "$file"
           done < <(
             find AuGenda "AuGendaWatch Watch App" AuGendaWatchWidgets \
               -type f -name 'Contents.json' -print
