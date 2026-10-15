@@ -1,0 +1,82 @@
+name: macOS Preview
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'codex/**'
+    paths:
+      - '.github/workflows/macos-preview.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Build downloadable macOS app
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build macOS preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/macOS
+          xcodebuild \
+            -project AuGenda.xcodeproj \
+            -scheme AuGenda \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/AuGenda-Mac-Preview" \
+            ARCHS=arm64 \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY='-' \
+            CODE_SIGN_ENTITLEMENTS='' \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            build 2>&1 | tee build/macOS/xcodebuild.log
+
+      - name: Verify and package app
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/AuGenda-Mac-Preview/Build/Products/Release/AuGenda.app"
+          test -d "$app"
+          test -x "$app/Contents/MacOS/AuGenda"
+          lipo -verify_arch arm64 "$app/Contents/MacOS/AuGenda"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          revision="$(git rev-parse --short HEAD)"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$app" "build/macOS/AuGenda-macOS-arm64-$revision.zip"
+          {
+            echo 'AuGenda macOS preview — Apple Silicon'
+            echo "Commit: $GITHUB_SHA"
+            echo "Branch: $GITHUB_REF_NAME"
+            echo "Build: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo 'Signed ad hoc for local preview; not notarized or App Store distributed.'
+          } > build/macOS/BUILD-INFO.txt
+
+      - name: Upload macOS app
+        uses: actions/upload-artifact@v4
+        with:
+          name: AuGenda-macOS-arm64-${{ github.sha }}
+          path: |
+            build/macOS/AuGenda-macOS-arm64-*.zip
+            build/macOS/BUILD-INFO.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macOS-preview-build-log
+          path: build/macOS/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 14

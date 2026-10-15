@@ -766,3 +766,14 @@ dedicated stores take precedence. iOS store placement is unchanged.
 The CI workflow now runs on pushes to `active-dev` (the remote default branch), `main`, and `codex/**` work branches, as well as pull requests. This allows branch builds without requiring pull-request creation access. The separate TestFlight workflow is unchanged.
 
 CI enablement also corrected shallow checkout history for commit whitespace checks and uses JSON validation for asset catalog Contents.json files. The existing Apple Foundation Models zero-cost test now uses the supported cost-estimation API rather than a private pricing helper.
+
+### Downloadable macOS preview — 2026-10-15
+
+The `macOS Preview` GitHub Actions workflow builds the selected branch's Release
+app for arm64, using ad hoc signing with distribution-restricted entitlements
+omitted as in the existing macOS packaging workflow. It verifies the executable,
+architecture, and code signature, then uploads a revision-labeled app ZIP and
+build provenance plus a separate build log (14-day retention). It can run
+manually, and changes to its workflow file trigger it on `codex/**` branches.
+This creates a local preview download, not a notarized or App Store release,
+and does not replace the installed app or change its data.
