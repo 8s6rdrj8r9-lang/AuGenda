@@ -217,14 +217,17 @@ Main app domains (all in `AuGenda/`):
 
 ## CI / deployment
 
-`.github/workflows/ci.yml` (macos-26 runner) on every PR and push to `main`:
+`.github/workflows/ci.yml` (macos-26 runner) on every PR and push to `main`, `active-dev`, or `codex/**`:
 repo hygiene checks (no tracked `xcuserdata`, no scratch audit files at root,
 `plutil -lint` on all plists/entitlements/privacy manifests/pbxproj), macOS
 unit tests with coverage floor, an iOS onboarding UI smoke test, Release builds
 for iOS and watchOS, Watch unit + launch UI tests, and a package-content check
 that rejects stray files (prompts, READMEs, scripts, font binaries) inside the
 built `.app`. There is no deployment step; release archiving, signing, and App
-Store submission are manual.
+Store submission are manual. `.github/workflows/macos-preview.yml` builds an
+ad-hoc-signed Apple Silicon macOS preview ZIP and build log as 14-day GitHub
+artifacts. It supports manual dispatch and runs when its workflow file changes
+on a `codex/**` branch; it does not install the app or publish a release.
 
 ## Security and privacy considerations
 

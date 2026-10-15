@@ -20,13 +20,13 @@ import UniformTypeIdentifiers
 
 enum TaskFilter: String, CaseIterable {
     case all     = "All"
-    case suggest = "For Now"
+    case suggest = "Matches energy"
     case waiting = "Waiting"
 }
 
 enum BacklogSortMode: String, CaseIterable {
     case sortOrder    = "Manual"
-    case ndPriority   = "ND Priority"
+    case ndPriority   = "Suggested order"
     case dueDate      = "Due Date"
     case friction     = "Easiest First"
 }
@@ -358,6 +358,11 @@ struct TaskBacklogView: View {
 
         NavigationStack {
             VStack(spacing: 0) {
+                Text("Tasks you add or review from Inbox. Scheduled items are in Today.")
+                    .font(Tokens.Typography.caption)
+                    .foregroundStyle(Color.appTextSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(Tokens.Spacing.base)
                 filterBar
 
                 // Control bar — energy (For Now) or sort (All/Waiting)
@@ -386,6 +391,10 @@ struct TaskBacklogView: View {
             .navigationBarTitleDisplayMode(.large)
             #endif
             .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    InboxAccessButton()
+                        .labelStyle(.titleAndIcon)
+                }
                 // Brain dump — fast batch add for the racing-thoughts moment.
                 // Sits LEFT of the detailed-add button so it reads first; this
                 // is the lower-friction path and should be the easier reach.
@@ -593,31 +602,13 @@ struct TaskBacklogView: View {
                 .font(Tokens.Typography.caption)
                 .foregroundColor(Color.appTextSecondary)
 
-            ForEach(BacklogSortMode.allCases, id: \.self) { mode in
-                Button {
-                    withAnimation(Tokens.Animation.standardEase()) {
-                        sortMode = mode
-                    }
-                } label: {
-                    Text(mode.rawValue)
-                        .font(Tokens.Typography.caption)
-                        .fontWeight(sortMode == mode ? .semibold : .regular)
-                        .padding(.horizontal, Tokens.Spacing.sm)
-                        .padding(.vertical, Tokens.Spacing.xs)
-                        .background(
-                            sortMode == mode
-                                ? Tokens.Color.primary.opacity(0.12)
-                                : Color.clear
-                        )
-                        .foregroundColor(
-                            sortMode == mode
-                                ? Tokens.Color.primary
-                                : Color.appTextSecondary
-                        )
-                        .cornerRadius(Tokens.Border.radiusSmall)
+            Picker("Task order", selection: $sortMode) {
+                ForEach(BacklogSortMode.allCases, id: \.self) { mode in
+                    Text(mode.rawValue).tag(mode)
                 }
-                .buttonStyle(.plain)
             }
+            .pickerStyle(.menu)
+            .labelsHidden()
 
             Spacer()
 
@@ -661,6 +652,7 @@ struct TaskBacklogView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(filter == mode ? .isSelected : [])
             }
         }
         .background(Color.appBackgroundSecondary)
@@ -739,7 +731,7 @@ struct TaskBacklogView: View {
 
     private var emptyTitle: String {
         switch filter {
-        case .all:     return "Backlog is clear"
+        case .all:     return "No tasks in this list"
         case .suggest: return "No tasks for right now"
         case .waiting: return "Nothing waiting"
         }
@@ -747,8 +739,8 @@ struct TaskBacklogView: View {
 
     private var emptyMessage: String {
         switch filter {
-        case .all:     return "Add your first task to get started."
-        case .suggest: return "Try raising your energy level, or add an easy task."
+        case .all:     return "Add a task or review a capture in Inbox. Scheduled items remain in Today."
+        case .suggest: return "No tasks match this energy level. You can browse All or change the filter."
         case .waiting: return "No tasks are blocked by anything."
         }
     }
@@ -941,6 +933,7 @@ struct AddTaskView: View {
     @EnvironmentObject private var profileManager: ActiveProfileManager
     @Query(sort: \Profile.sortOrder) private var profiles: [Profile]
 
+    @State private var showDetails = false
     @State private var title = ""
     @State private var notes = ""
     @State private var frictionLevel = 3
@@ -1012,6 +1005,13 @@ struct AddTaskView: View {
                         .lineLimit(1...4)
                 }
 
+                Section {
+                    Toggle("Add optional details", isOn: $showDetails)
+                } footer: {
+                    Text("A title is enough. Time and effort use starting estimates you can change later.")
+                }
+
+                if showDetails {
                 // ── Time estimate ──
                 Section("Roughly how long?") {
                     HStack(spacing: Tokens.Spacing.sm) {
@@ -1209,6 +1209,7 @@ struct AddTaskView: View {
                     TextField("Any extra context…", text: $notes, axis: .vertical)
                         .lineLimit(3...8)
                 }
+                }   // optional details
                 }   // closes Form
                 .formStyle(.grouped)   // macOS-native label/control layout
             }   // closes outer VStack
@@ -1217,6 +1218,7 @@ struct AddTaskView: View {
             #endif
             .onAppear {
                 if let task = editingTask {
+                    showDetails = true
                     title              = task.title
                     notes              = task.notes
                     frictionLevel      = min(

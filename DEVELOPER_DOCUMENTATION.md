@@ -1,6 +1,6 @@
 # AuGenda — Developer Documentation
 
-**Last updated:** 2026-09-12
+**Last updated:** 2026-10-15
 **Swift:** Swift 5 language mode with staged concurrency settings
 **Project type:** SwiftUI + SwiftData, iOS/iPadOS/macOS app with Watch app and widget targets, no external packages
 
@@ -750,3 +750,30 @@ metadata. Recognized AuGenda stores continue at their existing path; unrelated
 apps' stores are left untouched. Unreadable legacy metadata still produces the
 recovery surface rather than silently creating an empty account. Existing
 dedicated stores take precedence. iOS store placement is unchanged.
+
+
+## UI clarity update — 2026-10-15
+
+- Inbox has a labeled, profile-scoped pending count in the sidebar and Tasks toolbar. Inbox has Close; capture review has Back to Inbox separately from Discard.
+- Today uses the same title as navigation, labels its scheduled list “Scheduled today,” and calls the near-term empty state “Nothing coming up soon.” Scheduled AgendaItem records and the AgendaTask list remain separate; Tasks explains where scheduled items live. No persistence migration is involved.
+- Blocks is the consistent section name on Today. Energy matching uses “Matches energy,” priority ranking uses “Suggested order,” and sorting uses a menu to reduce competing controls.
+- New tasks start with a title and optional-details toggle; editing opens details. Hidden fields retain their existing defaults and values. Review labels collapsed difficulty Optional, or Suggested when AI suggestions exist; expanded scores are estimates.
+- Focus duration can be adjusted locally for the session (5–480 minutes), including accepting the historical suggestion, without changing profile defaults. Settings explains the Today layout in user-facing terms and distinguishes AI setup needed from enabled with a provider.
+- Validation (2026-10-15): [GitHub CI run 38787188369](https://github.com/8s6rdrj8r9-lang/AuGenda/actions/runs/38787188369) passed for commit `5f7f935a2d6f5dc2d0e26f4938ac62a35205f881`: macOS unit tests, 20.36% app line coverage (7% floor), iOS onboarding UI smoke test, iOS Release build, Watch app/test/widget build, six Watch unit tests, Watch launch UI smoke test, and package-content validation. Swift syntax and whitespace checks also passed locally. The changed screens still need a visual walkthrough; these automated checks do not establish usability or accessibility compliance. The installed local app has not been replaced.
+
+### GitHub validation routing — 2026-10-15
+
+The CI workflow now runs on pushes to `active-dev` (the remote default branch), `main`, and `codex/**` work branches, as well as pull requests. This allows branch builds without requiring pull-request creation access. The separate TestFlight workflow is unchanged.
+
+CI enablement also corrected shallow checkout history for commit whitespace checks and uses JSON validation for asset catalog Contents.json files. The existing Apple Foundation Models zero-cost test now uses the supported cost-estimation API rather than a private pricing helper.
+
+### Downloadable macOS preview — 2026-10-15
+
+The `macOS Preview` GitHub Actions workflow builds the selected branch's Release
+app for arm64, using ad hoc signing with distribution-restricted entitlements
+omitted as in the existing macOS packaging workflow. It verifies the executable,
+architecture, and code signature, then uploads a revision-labeled app ZIP and
+build provenance plus a separate build log (14-day retention). It can run
+manually, and changes to its workflow file trigger it on `codex/**` branches.
+This creates a local preview download, not a notarized or App Store release,
+and does not replace the installed app or change its data.

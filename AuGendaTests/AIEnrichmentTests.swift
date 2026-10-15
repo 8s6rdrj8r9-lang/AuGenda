@@ -564,9 +564,16 @@ struct AIEnrichmentTests {
         #expect(provider.defaultModel == "apple-foundation-3b")
 
         // Zero cost ledger entry
-        let rate = AIUsageLedger.pricing(for: provider.rawValue, model: provider.defaultModel)
-        #expect(rate.promptPer1M == 0)
-        #expect(rate.completionPer1M == 0)
+        #expect(AIUsageLedger.estimateCost(
+            provider: provider.rawValue,
+            promptTokens: 1_000_000,
+            completionTokens: 0
+        ) == 0)
+        #expect(AIUsageLedger.estimateCost(
+            provider: provider.rawValue,
+            promptTokens: 0,
+            completionTokens: 1_000_000
+        ) == 0)
 
         // Local-only outbound policy compatibility
         let suiteName = "com.augenda.tests.ai-apple-foundation.\(UUID().uuidString)"

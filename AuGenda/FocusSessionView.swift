@@ -36,16 +36,21 @@ struct FocusSessionView: View {
     @State private var breakEndsAt: Date? = nil
     @State private var skipBreakAfterAbandon = false
 
-    private var sessionMinutes: Int { profileManager.activePreferences?.focusSessionMinutes ?? 25 }
+    // A setup choice applies to this session without changing profile preferences.
+    @State private var chosenSessionMinutes: Int?
+    private var sessionMinutes: Int {
+        chosenSessionMinutes ?? profileManager.activePreferences?.focusSessionMinutes ?? 25
+    }
     private var breakMinutes: Int { profileManager.activePreferences?.breakMinutes ?? 10 }
 
     private var suggestedMinutes: Int? {
         let energy = profileManager.activePreferences?.currentEnergyLevel ?? 3
-        return CognitiveProfile.suggestedFocusLength(
+        let suggested = CognitiveProfile.suggestedFocusLength(
             in: modelContext,
             energyLevel: energy,
             profileID: profileManager.activeProfile?.clientID
         )
+        return min(480, max(5, suggested))
     }
 
     var body: some View {
@@ -296,11 +301,12 @@ struct FocusSessionView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                NavigationLink(destination: SettingsView()) {
-                    Text("adjust")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
+                Stepper("Duration", value: Binding(
+                    get: { sessionMinutes },
+                    set: { chosenSessionMinutes = $0 }
+                ), in: 5...480, step: 1)
+                .labelsHidden()
+                .accessibilityLabel("Focus duration, \(sessionMinutes) minutes")
             }
 
             if let suggested = suggestedMinutes, suggested != sessionMinutes {
@@ -309,6 +315,10 @@ struct FocusSessionView: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                     Spacer()
+                    Button("Use \(suggested) min") {
+                        chosenSessionMinutes = suggested
+                    }
+                    .buttonStyle(.bordered)
                 }
             }
 

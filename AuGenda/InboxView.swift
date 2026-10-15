@@ -8,9 +8,36 @@
 import SwiftUI
 import SwiftData
 
+// A stable review entry shared by the sidebar and compact Tasks toolbar.
+struct InboxAccessButton: View {
+    @EnvironmentObject private var profileManager: ActiveProfileManager
+    @Query(filter: #Predicate<InboxItem> { $0.stateRaw == "unprocessed" })
+    private var captures: [InboxItem]
+    @State private var showInbox = false
+
+    private var count: Int {
+        let profileID = profileManager.activeProfile?.clientID
+        return captures.filter {
+            profileID == nil || $0.assignedToProfileID == nil || $0.assignedToProfileID == profileID
+        }.count
+    }
+
+    var body: some View {
+        Button {
+            showInbox = true
+        } label: {
+            Label(count == 0 ? "Inbox" : "Inbox (\(count))", systemImage: "tray")
+        }
+        .accessibilityLabel("Inbox, \(count) captures to review")
+        .sheet(isPresented: $showInbox) { InboxView() }
+    }
+}
+
 // MARK: - Inbox View
 
 struct InboxView: View {
+
+    @Environment(\.dismiss) private var dismiss
 
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var profileManager: ActiveProfileManager
@@ -79,7 +106,7 @@ struct InboxView: View {
                                     .foregroundStyle(Color.appAccent)
                             }
                         } footer: {
-                            Text("Review each capture and tap \"Add to tasks\" to organize it. Swipe left to discard.")
+                            Text("Review a capture, then choose Add to tasks. You can also discard it during review.")
                                 .font(.caption)
                         }
                     }
@@ -95,6 +122,10 @@ struct InboxView: View {
             .navigationBarTitleDisplayMode(.large)
             #endif
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
+                }
                 ToolbarItem(placement: {
                     #if os(iOS)
                     return .navigationBarTrailing
@@ -359,7 +390,7 @@ struct InboxItemReviewSheet: View {
                             HStack(spacing: 8) {
                                 Image(systemName: "scope")
                                     .foregroundStyle(.secondary)
-                                Text("Difficulty: \(previewBand.label)")
+                                Text("Estimated difficulty: \(previewBand.label)")
                                     .font(.subheadline)
                                     .fontWeight(.medium)
                                 Spacer()
@@ -373,7 +404,7 @@ struct InboxItemReviewSheet: View {
                         HStack {
                             Text("Difficulty")
                             Spacer()
-                            Text(previewBand.label)
+                            Text(item.hasAISuggestions ? "Suggested · \(previewBand.label)" : "Optional")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -386,8 +417,11 @@ struct InboxItemReviewSheet: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Discard") { discard() }
-                        .foregroundStyle(.red)
+                    Button("Back to Inbox") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
+                }
+                ToolbarItem(placement: .automatic) {
+                    Button("Discard", role: .destructive) { discard() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add to tasks") { organize() }
