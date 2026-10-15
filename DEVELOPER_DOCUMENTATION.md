@@ -759,8 +759,10 @@ dedicated stores take precedence. iOS store placement is unchanged.
 - Blocks is the consistent section name on Today. Energy matching uses “Matches energy,” priority ranking uses “Suggested order,” and sorting uses a menu to reduce competing controls.
 - New tasks start with a title and optional-details toggle; editing opens details. Hidden fields retain their existing defaults and values. Review labels collapsed difficulty Optional, or Suggested when AI suggestions exist; expanded scores are estimates.
 - Focus duration can be adjusted locally for the session (5–480 minutes), including accepting the historical suggestion, without changing profile defaults. Settings explains the Today layout in user-facing terms and distinguishes AI setup needed from enabled with a provider.
-- Validation: changed Swift files passed syntax parsing on 2026-10-15. Full build, unit tests, and rendered interaction checks are pending: this machine has Command Line Tools but no full Xcode installation. The previously inspected installed app does not contain these edits.
+- Validation (2026-10-15): [GitHub CI run 38787188369](https://github.com/8s6rdrj8r9-lang/AuGenda/actions/runs/38787188369) passed for commit `5f7f935a2d6f5dc2d0e26f4938ac62a35205f881`: macOS unit tests, 20.36% app line coverage (7% floor), iOS onboarding UI smoke test, iOS Release build, Watch app/test/widget build, six Watch unit tests, Watch launch UI smoke test, and package-content validation. Swift syntax and whitespace checks also passed locally. The changed screens still need a visual walkthrough; these automated checks do not establish usability or accessibility compliance. The installed local app has not been replaced.
 
 ### GitHub validation routing — 2026-10-15
 
 The CI workflow now runs on pushes to `active-dev` (the remote default branch), `main`, and `codex/**` work branches, as well as pull requests. This allows branch builds without requiring pull-request creation access. The separate TestFlight workflow is unchanged.
+
+CI enablement also corrected shallow checkout history for commit whitespace checks and uses JSON validation for asset catalog Contents.json files. The existing Apple Foundation Models zero-cost test now uses the supported cost-estimation API rather than a private pricing helper.
