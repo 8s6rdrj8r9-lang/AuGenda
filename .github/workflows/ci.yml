@@ -24,6 +24,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          # git show --check needs the parent to inspect only this commit.
+          fetch-depth: 2
 
       - name: Select an Xcode with the required SDK
         shell: bash
