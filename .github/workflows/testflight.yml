@@ -99,6 +99,50 @@ jobs:
           name: AuGenda-iOS-ipa
           path: build/TestFlight/AuGenda.ipa
 
+      - name: Build Release App for macOS
+        run: |
+          mkdir -p build/macOS
+          set -o pipefail
+          xcodebuild \
+            -project AuGenda.xcodeproj \
+            -scheme AuGenda \
+            -configuration Release \
+            -destination "generic/platform=macOS" \
+            -derivedDataPath "$RUNNER_TEMP/AuGenda-Mac-Build" \
+            ARCHS=arm64 \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            build 2>&1 | tee xcodebuild-mac.log || {
+              echo "=== XCODEBUILD MAC FAILED ==="
+              tail -n 120 xcodebuild-mac.log
+              exit 1
+            }
+
+      - name: Package macOS App for Distribution
+        run: |
+          set -e
+          mkdir -p build/macOS
+          APP_PATH=$(find "$RUNNER_TEMP/AuGenda-Mac-Build" -name "AuGenda.app" -type d | head -n 1)
+          echo "Found macOS AuGenda.app at: $APP_PATH"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "Error: macOS AuGenda.app was not found!"
+            find "$RUNNER_TEMP/AuGenda-Mac-Build" -maxdepth 5 || true
+            exit 1
+          fi
+          cd "$(dirname "$APP_PATH")"
+          zip -qr "$GITHUB_WORKSPACE/build/macOS/AuGenda-macOS-arm64.zip" AuGenda.app
+          cd "$GITHUB_WORKSPACE"
+          ls -lh build/macOS/AuGenda-macOS-arm64.zip
+          echo "Generated AuGenda-macOS-arm64.zip size: $(ls -lh build/macOS/AuGenda-macOS-arm64.zip | awk '{print $5}')"
+
+      - name: Upload AuGenda macOS App to GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: AuGenda-macOS-Package
+          path: build/macOS/AuGenda-macOS-arm64.zip
+
       - name: Upload Build Log Artifact (Diagnostic)
         if: always()
         uses: actions/upload-artifact@v4
