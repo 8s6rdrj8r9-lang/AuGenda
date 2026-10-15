@@ -240,9 +240,9 @@ public struct AuGendaShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: CaptureBrainDumpIntent(),
             phrases: [
-                "Capture \(\.$text) in \(.applicationName)",
-                "Add \(\.$text) to my \(.applicationName) inbox",
-                "Brain dump \(\.$text) in \(.applicationName)"
+                "Capture in \(.applicationName)",
+                "Add to my \(.applicationName) inbox",
+                "Brain dump in \(.applicationName)"
             ],
             shortTitle: "Capture to AuGenda",
             systemImageName: "square.and.pencil"
@@ -269,8 +269,8 @@ public struct AuGendaShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: EnrichTaskIntent(),
             phrases: [
-                "Enrich \(\.$title) in \(.applicationName)",
-                "Break down \(\.$title) in \(.applicationName)"
+                "Enrich task in \(.applicationName)",
+                "Break down task in \(.applicationName)"
             ],
             shortTitle: "Enrich Task",
             systemImageName: "sparkles"
