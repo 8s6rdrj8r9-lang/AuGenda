@@ -49,7 +49,7 @@ jobs:
           app="$RUNNER_TEMP/AuGenda-Mac-Preview/Build/Products/Release/AuGenda.app"
           test -d "$app"
           test -x "$app/Contents/MacOS/AuGenda"
-          lipo -verify_arch arm64 "$app/Contents/MacOS/AuGenda"
+          lipo "$app/Contents/MacOS/AuGenda" -verify_arch arm64
           codesign --verify --deep --strict --verbose=2 "$app"
           revision="$(git rev-parse --short HEAD)"
           ditto -c -k --sequesterRsrc --keepParent \
