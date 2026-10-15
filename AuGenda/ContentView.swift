@@ -186,6 +186,9 @@ struct ContentView: View {
                             : Color.clear
                     )
                     .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
+                    if tab == .tasks {
+                        InboxAccessButton()
+                    }
                 }
             }
             .navigationTitle("AuGenda")
@@ -887,7 +890,7 @@ struct SettingsView: View {
     @AppStorage("ai.activeProvider") private var aiActiveProviderRaw: String = ""
 
     private var activeAIProviderLabel: String {
-        AIProvider(rawValue: aiActiveProviderRaw)?.displayName ?? "no provider chosen"
+        AIProvider(rawValue: aiActiveProviderRaw)?.displayName ?? "Setup needed"
     }
 
     @State private var showEraseConfirm = false
@@ -918,17 +921,17 @@ struct SettingsView: View {
                 Section {
                     Toggle(isOn: $useNewHomeDashboard) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Adaptive Home dashboard")
+                            Text("Adaptive Today layout")
                                 .fontWeight(.medium)
-                            Text(useNewHomeDashboard ? "On — Today tab uses the five-zone surface." : "Off — Today tab uses the legacy list.")
+                            Text(useNewHomeDashboard ? "Highlights one next action, with more work below." : "Shows a simple list of scheduled items.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
                 } header: {
-                    Text("Experiments")
+                    Text("Today layout")
                 } footer: {
-                    Text("Density adapts to your energy level; pin a capacity mode via the badge on the dashboard. Toggle off to revert to the simpler legacy list.")
+                    Text("The adaptive layout shows fewer details when your energy is low. Use the capacity button on Today to choose how much you see. Turn this off for the simple list.")
                 }
 
                 // ── AI Enrichment ──
@@ -946,7 +949,8 @@ struct SettingsView: View {
                                 Text("AI Enrichment")
                                     .fontWeight(.medium)
                                 Text(aiEnrichmentEnabled
-                                     ? "On — \(activeAIProviderLabel)"
+                                     ? (AIProvider(rawValue: aiActiveProviderRaw)?.isReleaseEnabled == true
+                                        ? "On — \(activeAIProviderLabel)" : "Setup needed — choose an available provider")
                                      : "Off — no task data leaves your device")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)

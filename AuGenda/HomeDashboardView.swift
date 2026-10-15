@@ -328,7 +328,7 @@ struct HomeDashboardView: View {
                 }
                 .padding(.vertical, Tokens.Spacing.base)
             }
-            .navigationTitle("Home")
+            .navigationTitle("Today")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
             #endif
@@ -773,7 +773,7 @@ private struct OrientationAnchor: View {
                 // Capacity badge (tap → density picker)
                 Button(action: onTapCapacity) {
                     HStack(spacing: 4) {
-                        Text(density.label)
+                        Text("Detail: \(density.label)")
                             .font(Tokens.Typography.caption)
                             .fontWeight(.semibold)
                         if isPinned {
@@ -1065,10 +1065,10 @@ private struct EmptyPrimaryCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.lg) {
             VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
-                Text("Nothing scheduled")
+                Text("Nothing coming up soon")
                     .font(Tokens.Typography.h1)
                     .foregroundColor(Color.appTextPrimary)
-                Text("You're free. Take a breath, or add something for today.")
+                Text("No upcoming item in the next two hours. You can check scheduled items below or add something.")
                     .font(Tokens.Typography.body)
                     .foregroundColor(Color.appTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1119,7 +1119,7 @@ private struct MomentumSurface: View {
             // ── Today section ──
             if !todayItems.isEmpty {
                 MomentumSection(
-                    title: "Today",
+                    title: "Scheduled today",
                     count: todayItems.count
                 ) {
                     ForEach(todayItems.prefix(density.momentumCardLimit)) { item in
@@ -1134,7 +1134,7 @@ private struct MomentumSurface: View {
             // ── For Now (energy-matched) ──
             if !forNowTasks.isEmpty {
                 MomentumSection(
-                    title: "For Now",
+                    title: "Matches energy",
                     subtitle: "Matched to your energy",
                     count: forNowTasks.count
                 ) {
@@ -1152,7 +1152,7 @@ private struct MomentumSurface: View {
             // the focal routine reads first. Session 1 §2.2 hyperfocus rule.
             if !activeBlocks.isEmpty {
                 let anyActive = activeBlocks.contains(where: { $0.isActive })
-                MomentumSection(title: "Routines", count: activeBlocks.count) {
+                MomentumSection(title: "Blocks", count: activeBlocks.count) {
                     ForEach(activeBlocks) { block in
                         BlockSummaryCard(
                             block: block,

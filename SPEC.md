@@ -4,7 +4,7 @@
 > layer, six-axis difficulty model, configurable capacity check-ins, and the
 > Gemini OAuth login path. Living document — keep in sync with the code.
 >
-> Last updated: 2026-09-12
+> Last updated: 2026-10-15
 
 AuGenda is an iOS/macOS agenda app for AuDHD brains. Everything below is built
 around the same posture: **calm, glanceable, opt-in, no demands, no surprises.**
@@ -302,3 +302,13 @@ metadata. Recognized AuGenda stores continue at their existing path; unrelated
 apps' stores are left untouched. Unreadable legacy metadata still produces the
 recovery surface rather than silently creating an empty account. Existing
 dedicated stores take precedence. iOS store placement is unchanged.
+
+
+## UI clarity update — 2026-10-15
+
+- Inbox has a labeled, profile-scoped pending count in the sidebar and Tasks toolbar. Inbox has Close; capture review has Back to Inbox separately from Discard.
+- Today uses the same title as navigation, labels its scheduled list “Scheduled today,” and calls the near-term empty state “Nothing coming up soon.” Scheduled AgendaItem records and the AgendaTask list remain separate; Tasks explains where scheduled items live. No persistence migration is involved.
+- Blocks is the consistent section name on Today. Energy matching uses “Matches energy,” priority ranking uses “Suggested order,” and sorting uses a menu to reduce competing controls.
+- New tasks start with a title and optional-details toggle; editing opens details. Hidden fields retain their existing defaults and values. Review labels collapsed difficulty Optional, or Suggested when AI suggestions exist; expanded scores are estimates.
+- Focus duration can be adjusted locally for the session (5–480 minutes), including accepting the historical suggestion, without changing profile defaults. Settings explains the Today layout in user-facing terms and distinguishes AI setup needed from enabled with a provider.
+- Validation: changed Swift files passed syntax parsing on 2026-10-15. Full build, unit tests, and rendered interaction checks are pending: this machine has Command Line Tools but no full Xcode installation. The previously inspected installed app does not contain these edits.
